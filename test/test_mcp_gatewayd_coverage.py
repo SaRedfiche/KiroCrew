@@ -1332,6 +1332,12 @@ class TestWriteDiagnostic:
 
 
 class TestZombieDiagnostic:
+    @staticmethod
+    async def _inline_to_thread(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+        """Keep watchdog unit tests independent from the shared executor."""
+
+        return func(*args, **kwargs)
+
     @pytest.mark.asyncio
     async def test_healthy_server_only_writes_probe_baselines(self, monkeypatch, tmp_path):
         diag = tmp_path / "diag.jsonl"
@@ -1359,6 +1365,7 @@ class TestZombieDiagnostic:
         diag = tmp_path / "diag.jsonl"
         monkeypatch.setattr(gw, "_zombie_diagnostic_path", lambda: diag)
         monkeypatch.setattr(gw, "_ZOMBIE_PROBE_INTERVAL_SECS", 0.01)
+        monkeypatch.setattr(gw.asyncio, "to_thread", self._inline_to_thread)
         server = MagicMock()
         server.is_serving.return_value = False
         stop = asyncio.Event()
@@ -1389,6 +1396,7 @@ class TestZombieDiagnostic:
         diag = tmp_path / "diag.jsonl"
         monkeypatch.setattr(gw, "_zombie_diagnostic_path", lambda: diag)
         monkeypatch.setattr(gw, "_ZOMBIE_PROBE_INTERVAL_SECS", 0.01)
+        monkeypatch.setattr(gw.asyncio, "to_thread", self._inline_to_thread)
         server = MagicMock()
         server.is_serving.return_value = False
         stop = asyncio.Event()
