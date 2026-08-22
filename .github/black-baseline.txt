@@ -1077,7 +1077,6 @@ test/test_publish_feed_contract.py
 test/test_publish_providers.py
 test/test_publish_sync.py
 test/test_queue_during_subagents.py
-test/test_queue_edit.py
 test/test_queue_receipt.py
 test/test_quick_send.py
 test/test_read_bounded_json.py
@@ -1209,7 +1208,6 @@ test/test_source_providers_comment_guard.py
 test/test_source_summary.py
 test/test_spawn_followup.py
 test/test_spawn_list_redaction.py
-test/test_spec_builder_routes_coverage.py
 test/test_stable_release_gate.py
 test/test_stale_asset_watchdog.py
 test/test_steering_api.py
