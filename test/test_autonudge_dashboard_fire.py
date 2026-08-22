@@ -16,6 +16,7 @@ the nudge path onto the same contract.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -67,6 +68,7 @@ def _orchestrator() -> gw.GatewayOrchestrator:
     )
     orch.autonudge_svc = MagicMock()
     orch.autonudge_svc.remove = AsyncMock()
+    orch.autonudge_svc.monitor_dispatch_is_authorized = AsyncMock(return_value=True)
     orch._session_tasks = {}
     return orch
 
@@ -197,18 +199,77 @@ class TestDashboardNudgeSlotResolution:
             last_wake_fingerprint="failure-a",
             wake_in_flight=True,
         )
-        spawn = _fake_spawn()
+        spawned: list[asyncio.Task] = []
+
+        def _spawn(_state, _slot, coro):
+            task = asyncio.create_task(coro)
+            spawned.append(task)
+            return task
+
         run_chat = AsyncMock()
         with (
-            patch.object(gw, "spawn_guarded_turn", spawn),
+            patch.object(gw, "spawn_guarded_turn", _spawn),
             patch("kiro_crew.dashboard.chat._run_chat", new=run_chat),
         ):
             assert await orch._fire_dashboard_nudge(structured) is True
             assert await orch._fire_dashboard_nudge(_loop()) is True
+            await asyncio.gather(*spawned)
 
         first, second = run_chat.call_args_list
         assert isinstance(first.kwargs["monitor_completion"], MonitorCompletionHook)
         assert "monitor_completion" not in second.kwargs
+
+    @pytest.mark.asyncio
+    async def test_queued_monitor_rechecks_claim_after_background_permit(self) -> None:
+        orch = _orchestrator()
+        live = _slot()
+        live.unattended = True
+        orch.dashboard_state.get_slot = MagicMock(return_value=live)
+        structured = _loop()
+        structured.monitor = MonitorState(
+            kind="github_pull_request",
+            target="owner/repo#123",
+            objective="review_ready",
+            created_ts=1_000.0,
+            last_wake_fingerprint="failure-a",
+            wake_in_flight=True,
+        )
+        queued = asyncio.Event()
+        permit = asyncio.Event()
+
+        async def _run_after_permit(_slot, coro):
+            queued.set()
+            await permit.wait()
+            return await coro
+
+        spawned: list[asyncio.Task] = []
+
+        def _spawn(_state, _slot, coro):
+            task = asyncio.create_task(coro)
+            spawned.append(task)
+            return task
+
+        orch.dashboard_state.run_background_turn = _run_after_permit
+        run_chat = AsyncMock()
+
+        with (
+            patch.object(gw, "spawn_guarded_turn", _spawn),
+            patch("kiro_crew.dashboard.chat._run_chat", new=run_chat),
+        ):
+            result = await orch._fire_dashboard_nudge(structured, "[Monitor wake]")
+            await queued.wait()
+            orch.autonudge_svc.monitor_dispatch_is_authorized.assert_not_awaited()
+            live.append.assert_not_called()
+            orch.autonudge_svc.monitor_dispatch_is_authorized.return_value = False
+            permit.set()
+            await spawned[0]
+
+        assert result is gw.MonitorDispatchResult.DISPATCHED
+        orch.autonudge_svc.monitor_dispatch_is_authorized.assert_awaited_once_with(
+            structured.id, "failure-a"
+        )
+        live.append.assert_not_called()
+        run_chat.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_unreachable_session_retires_the_loop_once_with_a_reason(
