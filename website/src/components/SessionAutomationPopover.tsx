@@ -1,10 +1,11 @@
 import { useEffect, useId, useState } from 'react'
 import { Activity, Radar, RotateCw, Square, X } from 'lucide-react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { api, type MonitorWrite } from '../api/client'
+import { api, ApiError, type MonitorWrite } from '../api/client'
 import {
   deriveAutomationStatus,
   MONITOR_STATUS_KEYS,
+  normalizePullRequestMonitorTarget,
   normalizeAutomationRecord,
   STRUCTURED_MONITOR_DEFAULTS,
   STRUCTURED_MONITOR_LIMITS,
@@ -53,6 +54,26 @@ type Mutation =
   | { action: 'update'; id: string; payload: MonitorWrite }
   | { action: 'stop'; id: string }
   | { action: 'restart'; id: string }
+
+function monitorRequestError(failure: unknown): string {
+  if (!(failure instanceof ApiError) || failure.status !== 400) {
+    return i18nT('components.sessionAutomationPopover.request_failed')
+  }
+  let code = ''
+  try {
+    const body = JSON.parse(failure.body) as unknown
+    if (body && typeof body === 'object' && !Array.isArray(body)) {
+      const rawCode = (body as Record<string, unknown>).code
+      code = typeof rawCode === 'string' ? rawCode : ''
+    }
+  } catch {
+    return i18nT('components.sessionAutomationPopover.request_failed')
+  }
+  if (code === 'gitlab_host_not_allowed') {
+    return i18nT('components.sessionAutomationPopover.gitlab_host_not_allowed')
+  }
+  return i18nT('components.sessionAutomationPopover.request_failed')
+}
 
 const defaults = (): Draft => ({
   target: '',
@@ -175,8 +196,8 @@ export default function SessionAutomationPopover({
       queryClient.invalidateQueries({ queryKey: ['session-automation', slotKey] })
       onOpenChange(false)
     },
-    onError: () => {
-      setErrors({ request: i18nT('components.sessionAutomationPopover.request_failed') })
+    onError: failure => {
+      setErrors({ request: monitorRequestError(failure) })
     },
   })
 
@@ -236,6 +257,15 @@ export default function SessionAutomationPopover({
     if (validates('target') && !draft.target.trim()) {
       nextErrors.target = i18nT('components.sessionAutomationPopover.enter_pull_request_url')
     }
+    const normalizedTarget = normalizePullRequestMonitorTarget(draft.target.trim())
+    if (validates('target') && draft.target.trim() && !normalizedTarget) {
+      nextErrors.target = i18nT('components.sessionAutomationPopover.invalid_pull_request_url')
+    } else if (validates('target') && monitor && normalizedTarget
+      && normalizedTarget.kind !== monitor.monitorKind) {
+      nextErrors.target = i18nT(
+        'components.sessionAutomationPopover.provider_change_requires_new_monitor',
+      )
+    }
     if (validates('cadence') && cadence === null) {
       nextErrors.cadence = rangeError(STRUCTURED_MONITOR_LIMITS.cadenceSecs)
     }
@@ -266,32 +296,35 @@ export default function SessionAutomationPopover({
       return
     }
     setErrors({})
-    const createPayload = {
-      kind: 'github_pull_request' as const,
-      objective: 'review_ready' as const,
-      target: draft.target.trim(),
-      cadence_secs: cadence!,
-      max_runtime_secs: runtime!,
-      max_agent_turns: turns!,
-      max_tokens: tokens!,
-      max_provider_errors: providerErrors!,
-      wake_instructions: draft.wakeInstructions.trim(),
-    }
     if (!monitor) {
-      mutation.mutate({ action: 'create', payload: { ...createPayload, slot_key: slotKey } })
+      mutation.mutate({
+        action: 'create',
+        payload: {
+          slot_key: slotKey,
+          kind: normalizedTarget!.kind,
+          objective: 'review_ready',
+          target: normalizedTarget!.target,
+          cadence_secs: cadence!,
+          max_runtime_secs: runtime!,
+          max_agent_turns: turns!,
+          max_tokens: tokens!,
+          max_provider_errors: providerErrors!,
+          wake_instructions: draft.wakeInstructions.trim(),
+        },
+      })
       return
     }
     const payload: MonitorWrite = {}
-    if (editor.dirty.target) payload.target = createPayload.target
-    if (editor.dirty.cadence) payload.cadence_secs = createPayload.cadence_secs
-    if (editor.dirty.runtime) payload.max_runtime_secs = createPayload.max_runtime_secs
-    if (editor.dirty.turns) payload.max_agent_turns = createPayload.max_agent_turns
-    if (editor.dirty.tokens) payload.max_tokens = createPayload.max_tokens
+    if (editor.dirty.target) payload.target = normalizedTarget!.target
+    if (editor.dirty.cadence) payload.cadence_secs = cadence!
+    if (editor.dirty.runtime) payload.max_runtime_secs = runtime!
+    if (editor.dirty.turns) payload.max_agent_turns = turns!
+    if (editor.dirty.tokens) payload.max_tokens = tokens!
     if (editor.dirty.providerErrors) {
-      payload.max_provider_errors = createPayload.max_provider_errors
+      payload.max_provider_errors = providerErrors!
     }
     if (editor.dirty.wakeInstructions) {
-      payload.wake_instructions = createPayload.wake_instructions
+      payload.wake_instructions = draft.wakeInstructions.trim()
     }
     mutation.mutate({ action: 'update', id: monitor.id, payload })
   }
@@ -402,8 +435,11 @@ export default function SessionAutomationPopover({
                 placeholder={i18nT('components.sessionAutomationPopover.pull_request_url_placeholder')}
                 aria-labelledby={`${id}-target-label`}
                 aria-invalid={!!errors.target}
-                aria-describedby={errors.target ? `${id}-target-error` : undefined}
+                aria-describedby={`${id}-target-help${errors.target ? ` ${id}-target-error` : ''}`}
               />
+              <p id={`${id}-target-help`} className="text-[11px] text-muted">
+                {i18nT('components.sessionAutomationPopover.supported_source_providers')}
+              </p>
               <FieldError id={`${id}-target-error`} message={errors.target} />
             </div>
             <div className="grid grid-cols-1 min-[390px]:grid-cols-2 gap-3">
