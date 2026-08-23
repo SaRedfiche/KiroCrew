@@ -84,6 +84,11 @@ _STRICT_DIRS: list[str] = [
     # ``.vault/.vault_key`` and decrypt the store.
     ".kiro/crew/.vault",
     ".kirocrew/.vault",
+    # Durable run commands contain raw task payloads and must remain hidden
+    # even when a shell command constructs the path dynamically and bypasses
+    # the tool-call path matcher.
+    ".kiro/crew/run-coordinator",
+    ".kirocrew/run-coordinator",
 ]
 
 _STANDARD_DIRS: list[str] = [
@@ -96,6 +101,8 @@ _STANDARD_DIRS: list[str] = [
     # Secret vault — hidden in every mode (see _STRICT_DIRS note above).
     ".kiro/crew/.vault",
     ".kirocrew/.vault",
+    ".kiro/crew/run-coordinator",
+    ".kirocrew/run-coordinator",
 ]
 
 # CC mode: hides all credential dirs including .aws, but selectively exposes
@@ -113,6 +120,8 @@ _CC_DIRS: list[str] = [
     # Secret vault — hidden in every mode (see _STRICT_DIRS note above).
     ".kiro/crew/.vault",
     ".kirocrew/.vault",
+    ".kiro/crew/run-coordinator",
+    ".kirocrew/run-coordinator",
 ]
 
 # CC mode: files to expose read-only inside otherwise-hidden dirs.
