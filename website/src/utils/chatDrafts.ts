@@ -28,6 +28,16 @@ export const DRAFTS_KEY = 'mc-chat-drafts'
 // user-visible copy.
 const PARAGRAPH_BREAK = '\n\n'
 
+/** Trailing newline run, plus the blank space around it, at the end of a draft.
+ *
+ *  Deliberately NOT `/\s+$/`. Two trailing SPACES are a Markdown hard line break,
+ *  so a blanket trailing-whitespace strip rewrites the last line of a draft the
+ *  user is still holding — the composer keeps its text verbatim, and the merge
+ *  below is not the place to edit it. Only the trailing NEWLINES have to go, and
+ *  only because the paragraph break is about to supply them; a run with no
+ *  newline in it is left exactly as typed. */
+const TRAILING_NEWLINES = /[^\S\n]*(?:\n[^\S\n]*)+$/
+
 export function mergeIntoDraft(draft: string | null | undefined, prompt: string): string {
   const existing = draft ?? ''
   if (!existing.trim()) return prompt
@@ -36,7 +46,33 @@ export function mergeIntoDraft(draft: string | null | undefined, prompt: string)
   // prose, but the composer merges whatever the server hands back and an edited
   // queue entry can be emptied to nothing.
   if (!prompt.trim()) return existing
-  return existing.replace(/\s+$/, '') + PARAGRAPH_BREAK + prompt
+  return existing.replace(TRAILING_NEWLINES, '') + PARAGRAPH_BREAK + prompt
+}
+
+/**
+ * Put the payload of a send the server never accepted back into the composer.
+ *
+ * The same append-merge as `mergeIntoDraft` — a send is in flight for seconds and
+ * the user can type in that window, so neither payload may overwrite the other —
+ * with one rule the hand-off paths do not need: an exact duplicate is not
+ * appended twice. A synchronously rejected create can land before React flushes
+ * the composer clear, so the payload may already be sitting there.
+ *
+ * Deduped ONLY on exact equality. A whitespace-delimited occurrence is not proof
+ * the payload was already restored — a draft like "please run tests first"
+ * contains the distinct payload "run tests" — and treating it as restored drops
+ * the message. Equality still covers the case this guard exists for, and errs
+ * toward a visible duplicate rather than silent loss.
+ *
+ * One implementation for every recovery site — ChatPage's failed create and its
+ * failed send, and ChatPane's own restore, which serves both a failed send and a
+ * failed question-card fallback — for the same reason `mergeIntoDraft` is
+ * shared: separate spellings of one rule are how the surfaces drift apart.
+ */
+export function mergeRecoveredDraft(keep: string | null | undefined, payload: string): string {
+  const existing = keep ?? ''
+  if (existing.trim() && existing.trim() === payload.trim()) return existing
+  return mergeIntoDraft(existing, payload)
 }
 
 export type Drafts = Record<string, string>
