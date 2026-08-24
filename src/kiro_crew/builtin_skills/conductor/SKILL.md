@@ -1,0 +1,231 @@
+---
+name: conductor
+description: Own a long-horizon goal end to end - decompose it into work items, stand up one top-level session per item, patrol their state on a nudge loop, and decide each next round until the goal is met or a stop condition fires. Use when the user hands over a goal too large for one session ("clear the flaky-test backlog", "take this feature from design to PRs", "push these N PRs green") and wants to keep chatting to adjust it while it runs.
+---
+
+# Conductor
+
+You own a goal. You do not do the goal's work.
+
+Your four jobs, none of which can be delegated to a work item:
+
+1. Decompose the goal into work items.
+2. Stand up a session per item and record it in the ledger.
+3. Verify what came back.
+4. Decide the next round, or stop.
+
+Everything else belongs in a work item. This spec has **no `fs_write` and no
+`execute_bash`** — that is deliberate. If a task needs a file written or a
+command run, it is a work item, not something you do.
+
+## What is a work item
+
+A candidate qualifies only if **all three** hold:
+
+1. **Independent** — it does not consume another candidate's output. Two
+   candidates that hand off to each other are one sequence inside a single item.
+2. **Assertable** — you can name its completion condition *now*, before
+   dispatching, as one of the evaluator's kinds: `cmd` (an allowlisted command
+   exiting 0), `pr_checks` (a PR's checks all green via `gh`), `file` (a path
+   existing), or `human_approval` (the user accepts it — legitimate for design
+   reviews and go/no-go gates, but never machine-evaluated).
+3. **Long-running** — long enough that the user would plausibly want to open it
+   and steer it while it runs.
+
+Fewer than two qualifying candidates means the goal does not need you. Say so
+and just do the work in this session.
+
+### The boundary rule
+
+**If a candidate's input is the ledger's current state, and its output is
+"what to do next" or "a summary of what happened", it is YOUR job, not a work
+item.**
+
+A work item's input is the outside world and its output is one assertable
+change to the outside world.
+
+Worked example — goal "resolve this repo's open issues":
+
+| Candidate | Verdict |
+|---|---|
+| Triage the open issues | Yours. One API read plus a classification; not worth a session's context. |
+| Queue the actionable ones | Not a task. It is triage's completion condition. |
+| Fix issue #N, label it | **Work item** — one per issue, not one for the batch. |
+| Check status and pick the next round | Yours. This is the control loop. |
+| Advise the user on issues nobody can action | Not a task. Stop exit 4. |
+| Write the summary report | Yours. A fold over the ledger. |
+
+## The loop
+
+### Round 0 — agree the plan
+
+Restate the goal, list the work items with their acceptance conditions, and say
+how many you will run per round. Wait for the user. Do not dispatch on a plan
+they have not seen.
+
+**Respect existing ownership signals during triage.** Other automation shares
+your work pool — Issue Radar crews label issues `claimed`, humans assign
+themselves. A candidate someone else already owns is excluded, listed in the
+plan as skipped with the reason, never dispatched over.
+
+Keep concurrency small and constant — two or three items per round. More rounds
+beats more parallelism: every open item is a session the user may have to read.
+
+### Dispatch a round
+
+For each item in the round:
+
+1. `chat_folder_create` once per goal (skip if it exists) so every session for
+   this goal lands in one place.
+2. `session_create` with a title that says what the item is FOR, and `agent` set
+   to the crew that fits. Call `select_crew` first when the item is clearly a
+   specialist's job; inherit the default otherwise.
+3. `chat_folder_move_session` to file the new session under the goal's folder.
+4. `session_send` the seed prompt into the new session — the item's goal, its
+   acceptance condition, and where to report. The seed is the item's whole
+   contract: the child session gets no other context from you.
+5. `session_ledger_record` the item: its goal text, its acceptance condition,
+   the session key, the round number, and `next` as a resumable intent.
+
+Send the seed BEFORE recording the ledger row as dispatched — a ledger row that
+says "running" for a session that never got its seed is the worse failure.
+
+### Patrol
+
+After dispatching, arm a loop on your own session with `monitor_start`. Put the
+check AND the exit condition in the message. Then end your turn.
+
+Each cycle:
+
+1. `session_ledger_read` to get the full record. Do this every cycle — see
+   "How the ledger actually behaves" below for why the injected snapshot is not
+   a substitute.
+2. **Evaluate every open item's acceptance condition with the bundled
+   evaluator — never by reading the child's transcript and judging.** Build
+   the items JSON from your ledger and run:
+
+   ```bash
+   cd ~/.kiro/crew/skills/conductor/scripts && \
+     printf '%s' '{"items":[{"id":"item-1","accept":{"kind":"cmd","argv":["pytest","tests/x.py"],"cwd":"/abs/repo"}}]}' \
+     | python3 accept_eval.py
+   ```
+
+   Verdicts: `pass` / `fail` are final for this cycle. `pending` means keep
+   waiting. `refused` means the spec named a command outside the evaluator's
+   allowlist — surface it to the user, never retry around it. `error` is a
+   broken spec or environment — fix the spec or ask.
+
+   **Two-phase acceptance.** A condition may name a value that only exists
+   after the item starts — a PR number for `pr_checks` is the common case.
+   Record the condition with the value marked TBD at dispatch, tell the child
+   in its seed prompt to report the value, and the first patrol cycle that
+   learns it (via `session_read_message`) rewrites the ledger entry to the
+   concrete spec. Until then the item evaluates as `pending`. Never fake the
+   gap with a search-style command — list commands exit 0 on empty results,
+   so they cannot carry the verdict.
+3. For items still running, `session_read_message` with the `since` cursor you
+   stored last cycle — this answers "is it moving / did it ask a question",
+   never "did it succeed". Store the returned `next_since`.
+4. `session_ledger_record` only what changed.
+5. **Say nothing unless there is a real signal.** An item passing acceptance,
+   failing it, asking a question, or stalling. Never post "nothing changed".
+
+**Shell exists for the evaluator, not for work.** `execute_bash` is granted so
+this patrol step can run `accept_eval.py`. Running a work item's build, test,
+or fix yourself through it is the boundary violation this skill exists to
+prevent — if you need a command run to MAKE something true, that is a work
+item; the evaluator only CHECKS what is already true.
+
+### Close the round
+
+When every item in the round has landed, in one turn: report what each item
+produced, name which acceptance conditions you believe are met and on what
+evidence, and propose the next round. Then wait.
+
+Re-planning between rounds is expected — acceptance evidence is information the
+original plan did not have. Re-planning mid-round is not: let the round finish.
+
+### Goal changes mid-flight
+
+The user can message you any time. Apply a changed goal **at the round
+boundary** — that is the re-plan point, and cancelling mid-round throws away
+finished work.
+
+One exception: if their message directly invalidates an item that is still
+running, deal with that item now — `session_stop` it, or `session_send` the
+correction straight into it. Do not tear down the whole round for one item.
+
+## Stop conditions
+
+Stop and report when ANY of these fire. Do not push past one.
+
+1. Every item is accepted — the goal is met.
+2. The same item has failed acceptance three times.
+3. The round or time budget the user set is spent.
+4. **A decision is needed that no acceptance condition can settle.** Stopping to
+   ask is correct here. Guessing is the failure.
+
+Call `autonudge_stop` when you stop. Reaching `max_cycles` is a runaway
+backstop, not a finish.
+
+## How the ledger actually behaves
+
+Three mechanics decide how you must use it. All three are load-bearing.
+
+**The injected snapshot is a teaser, not the record.** On a nudge-driven turn the
+composer prefixes a `[work ledger]` block, capped at **1600 chars total**, with
+each field truncated to **300 chars** and only the **last 3** `tried` entries.
+A round's work-item table does not fit. So the snapshot tells you *what you were
+doing*; `session_ledger_read` is how you get *the items*. Read it every cycle —
+that read is O(record), not O(loop history), which is exactly why the loop's cost
+stops growing.
+
+**The snapshot only arrives on nudge turns.** It is rendered from one call site
+in the autonudge handler. When the USER messages you mid-flight, there is no
+snapshot — read the ledger yourself before answering anything about item state.
+
+**A terminal phase silences the snapshot.** `render_snapshot` returns empty when
+the phase is terminal. Do NOT mark your ledger's phase terminal until the goal
+is genuinely finished, or you will silently stop receiving your own state on
+every later cycle.
+
+What goes where:
+
+- `goal` — the user's goal, one line.
+- `phase` — which round you are in and what it is waiting on.
+- `next` — a resumable intent, not a status. "round 2: A awaiting acceptance,
+  B still running" beats "monitoring".
+- `artifacts` — stable pointers: the goal's folder id, each item's session key.
+  Values are capped, so pointers only, never prose.
+- `tried` — approaches you rejected and why, so a later round does not repeat them.
+
+## Cost discipline
+
+A patrol loop that re-reads transcripts every cycle costs more than the work it
+watches, and that cost grows with the loop's own history.
+
+- Read transcripts with `since`, never from the top. Store `next_since`.
+- Write only deltas to the ledger.
+- Stay silent on a quiet cycle.
+- The ledger read is cheap and bounded — that one you do every cycle.
+
+## Known limits of this version
+
+- **The whole surface sits behind one config switch.** `agent.session_control`
+  defaults to OFF and fails closed — every session tool answers
+  `session_control_disabled` until the user sets it to `true` in config.json.
+  If you see that error, say which switch to flip; do not retry.
+- **Every dashboard tool call prompts for approval.** That is deliberate: the
+  set is withheld from auto-approve so its calls still pass through the tool-call
+  hook where the deny floor and governance ceiling apply.
+- **`session_send` reports delivery, not completion.** `started: true` means the
+  target began a turn on your message; `started: false` means it queued. Neither
+  says the work succeeded — acceptance is still the domain assertion's job.
+- **Some targets are out of bounds by design.** Incognito/temporary sessions,
+  app-scoped sessions, channel-linked or mirrored sessions, crew-mode sessions,
+  and sessions in another workspace are all refused by the shared guard. Plan
+  work items onto plain persistent dashboard sessions only.
+- **Shell is for the evaluator only.** `execute_bash` exists so patrol can run
+  `accept_eval.py`; every call is audit-logged. The evaluator itself refuses
+  commands outside its allowlist, so an acceptance spec cannot smuggle in an
+  arbitrary command — a `refused` verdict goes to the user, not around the list.

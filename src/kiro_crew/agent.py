@@ -42,6 +42,7 @@ from kiro_crew.agent_discovery import _read_agent_spec
 from kiro_crew.agent_files import (
     AGENT_FILENAME,
 )
+from kiro_crew.agent_files import CONDUCTOR_AGENT_FILENAME as _CONDUCTOR_AGENT_FILENAME
 from kiro_crew.agent_files import HEARTBEAT_AGENT_FILENAME as _HEARTBEAT_AGENT_FILENAME
 from kiro_crew.agent_files import KNOWLEDGE_AGENT_FILENAME as _KNOWLEDGE_AGENT_FILENAME
 from kiro_crew.agent_files import LITE_AGENT_FILENAME as _LITE_AGENT_FILENAME
@@ -4095,6 +4096,12 @@ def rebuild_agent_config(*, clean: bool = False) -> Path:
     except Exception:
         logger.debug("kirocrew-heartbeat agent install failed", exc_info=True)
 
+    # Install kirocrew-conductor agent (goal decomposition + session-control dispatch)
+    try:
+        _install_conductor_agent()
+    except Exception:
+        logger.debug("kirocrew-conductor agent install failed", exc_info=True)
+
     # Bidirectional sync: ensure packages installed for one provider
     # are also available for the other (agents↔plugins, skills).
     sync_aim_packages()
@@ -4332,6 +4339,84 @@ def _install_research_agent() -> None:
     path = kiro_agents_dir_path() / _RESEARCH_AGENT_FILENAME
     _atomic_json_write(path, config)
     logger.info("Installed research agent config: %s", path)
+
+
+_CONDUCTOR_SYSTEM_PROMPT = """# KiroCrew Conductor
+
+You are `kirocrew-conductor`. You own a long-horizon goal: you decompose it
+into work items, stand up one top-level session per item, patrol their state,
+and decide each next round until the goal is met or a stop condition fires.
+
+**You never do a work item's work yourself.** If a task needs a file written,
+a build run, or a fix made, it is a work item for a child session — your four
+jobs are decomposition, dispatch, verification, and the next-round decision.
+Shell access exists solely to run the bundled acceptance evaluator
+(`conductor` skill, `scripts/accept_eval.py`); acceptance is its deterministic
+verdict, never your reading of a child session's transcript.
+
+The `conductor` skill carries the full operating procedure — the work-item
+tests, the dispatch steps, the patrol loop, the stop conditions. Read it
+before acting on a goal. The user can message you at any time; apply goal
+changes at the round boundary, except a message that directly invalidates an
+in-flight item, which you handle immediately.
+"""
+
+
+def _install_conductor_agent() -> None:
+    """Generate and install the kirocrew-conductor agent config.
+
+    Derives from the kirocrew agent (resolved MCP invocations, security hooks)
+    but narrows to the conductor's charter: session control + core tools +
+    shell for the bundled acceptance evaluator, and nothing that lets it do a
+    work item's work itself (no ``fs_write``). The ``kirocrew-dashboard``
+    server is the opt-in per-agent set (folder + session-control tools); this
+    installer granting it IS the explicit per-agent assignment that set
+    requires — it is deliberately absent from the default agent's spec.
+
+    ``@kirocrew-dashboard`` is NOT added to ``allowedTools``: its calls must
+    keep passing through ``hooks.on_tool_call`` where the deny floor and
+    governance ceiling apply, so every session-control call prompts.
+    """
+    config = build_agent_config()
+    config["name"] = "kirocrew-conductor"
+    config["description"] = (
+        "Owns a long-horizon goal: decomposes it into work items, stands up "
+        "a top-level session per item, patrols their state, and decides each "
+        "next round. Never does the work itself."
+    )
+    config["prompt"] = _CONDUCTOR_SYSTEM_PROMPT
+    config["tools"] = [
+        "execute_bash",
+        "fs_read",
+        "code",
+        "grep",
+        "glob",
+        "web_fetch",
+        "web_search",
+        "session",
+        "report",
+        "tool_search",
+        "@kirocrew-core",
+        "@kirocrew-dashboard",
+    ]
+    config["allowedTools"] = ["session", "report", "@kirocrew-core"]
+    mcp = config.get("mcpServers", {}) or {}
+    core_entry = mcp.get("kirocrew-core")
+    narrowed: dict = {}
+    if core_entry:
+        narrowed["kirocrew-core"] = core_entry
+    dash_cmd, dash_args = _kirocrew_mcp_invocation("mcp-dashboard")
+    narrowed["kirocrew-dashboard"] = {"command": dash_cmd, "args": dash_args}
+    config["mcpServers"] = narrowed
+    config["permissions"] = {
+        "rules": [
+            {"capability": "mcp", "match": ["kirocrew-core/*"], "effect": "allow"},
+        ]
+    }
+    kiro_agents_dir_path().mkdir(parents=True, exist_ok=True)
+    path = kiro_agents_dir_path() / _CONDUCTOR_AGENT_FILENAME
+    _atomic_json_write(path, config)
+    logger.info("Installed conductor agent config: %s", path)
 
 
 _HEARTBEAT_SYSTEM_PROMPT = """# KiroCrew Heartbeat Worker
