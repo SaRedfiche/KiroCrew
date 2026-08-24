@@ -1355,6 +1355,106 @@ def test_stop_is_refused_for_a_session_out_of_bounds(tmp_path):
         asyncio.run(sc.stop_target(state, caller_session_key=_key(caller), target="chat-hidden"))
 
 
+# ── session_send ──
+
+
+def test_send_to_an_idle_target_starts_a_turn_with_provenance(tmp_path, monkeypatch):
+    """The delivered prompt carries the caller tag, and an idle target runs now.
+
+    Provenance is the load-bearing part: the target renders the message as a
+    user row, and without the tag it is indistinguishable from something the
+    person typed into that session themselves.
+    """
+    state = _make_state(tmp_path)
+    caller = _slot(state, "chat-1")
+    target = _peer_target(state, "chat-2", caller)
+
+    ran: dict[str, str] = {}
+
+    async def _fake_run_chat(_state, slot, prompt):
+        ran["slot"] = slot.key
+        ran["prompt"] = prompt
+
+    monkeypatch.setattr("kiro_crew.dashboard.chat_runner._run_chat", _fake_run_chat)
+
+    async def _drive():
+        out = await sc.send_to_target(
+            state, caller_session_key=_key(caller), target="chat-2", message="do the thing"
+        )
+        # Let the enqueue_or_run_prompt task actually execute the fake turn.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        return out
+
+    out = asyncio.run(_drive())
+
+    assert out == {"ok": True, "target": "chat-2", "started": True}
+    assert ran["slot"] == "chat-2"
+    assert ran["prompt"].startswith("[sent by session ")
+    assert ran["prompt"].endswith("do the thing")
+    # The transcript shows the message as a user row, tag included.
+    assert any(
+        m.get("content", "").endswith("do the thing") for m in target.messages if m.get("role") == "user"
+    )
+
+
+def test_send_to_a_busy_target_queues_instead_of_racing(tmp_path):
+    """A mid-turn target must not get a second concurrent turn — the message
+    queues, and the caller is told so (`started: False`), because "ran" and
+    "will run later" are different answers to a coordinator."""
+    state = _make_state(tmp_path)
+    caller = _slot(state, "chat-1")
+    target = _peer_target(state, "chat-2", caller)
+    _busy(target)
+
+    out = asyncio.run(
+        sc.send_to_target(
+            state, caller_session_key=_key(caller), target="chat-2", message="queued message"
+        )
+    )
+
+    assert out["started"] is False
+    assert any("queued message" in q.get("content", "") for q in target._queue)
+
+
+def test_send_is_refused_for_a_session_out_of_bounds(tmp_path):
+    """The same deny-by-default guard the other verbs share gates send too."""
+    state = _make_state(tmp_path)
+    caller = _slot(state, "chat-1")
+    _slot(state, "chat-hidden", memory_mode="incognito")
+    with pytest.raises(sc.SessionControlError):
+        asyncio.run(
+            sc.send_to_target(
+                state, caller_session_key=_key(caller), target="chat-hidden", message="hi"
+            )
+        )
+
+
+def test_send_refuses_an_empty_or_oversized_message(tmp_path):
+    """Size gates live in the business layer, not only in the tool schema —
+    the HTTP route is callable without the MCP layer's validation."""
+    state = _make_state(tmp_path)
+    caller = _slot(state, "chat-1")
+    _peer_target(state, "chat-2", caller)
+
+    with pytest.raises(sc.SessionControlError) as empty_exc:
+        asyncio.run(
+            sc.send_to_target(state, caller_session_key=_key(caller), target="chat-2", message="  ")
+        )
+    assert empty_exc.value.code == "message_empty"
+
+    with pytest.raises(sc.SessionControlError) as long_exc:
+        asyncio.run(
+            sc.send_to_target(
+                state,
+                caller_session_key=_key(caller),
+                target="chat-2",
+                message="x" * (sc.MAX_SEND_MESSAGE_CHARS + 1),
+            )
+        )
+    assert long_exc.value.code == "message_too_long"
+
+
 def test_session_control_routes_are_strict_internal():
     """Every registered session-control route must sit in the strict bucket.
 
