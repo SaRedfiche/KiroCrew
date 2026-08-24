@@ -370,7 +370,9 @@ def requires_python(repo: Path) -> str | None:
     return cfg.get("options", "python_requires").strip() or None
 
 
-def _probe_interpreter(target_py: Path, code: str) -> subprocess.CompletedProcess[str]:
+def _probe_interpreter(
+    target_py: Path, code: str, timeout: float | None = None
+) -> subprocess.CompletedProcess[str]:
     """Run *code* under *target_py*, isolated from the caller's CWD and env.
 
     Every probe here asks a question about the VENV -- where it resolves this
@@ -393,6 +395,11 @@ def _probe_interpreter(target_py: Path, code: str) -> subprocess.CompletedProces
     directory as well: it keeps the child's working directory valid even when
     the caller's has been deleted, and a venv's script directory holds
     executables, never an importable package.
+
+    ``timeout`` bounds the child's runtime for callers probing UNTRUSTED
+    candidate interpreters (``subprocess.TimeoutExpired`` propagates); the
+    default keeps existing venv probes, whose interpreters we created,
+    unbounded as before.
     """
     return subprocess.run(
         [str(target_py), "-I", "-X", "utf8", "-c", code],
@@ -401,6 +408,7 @@ def _probe_interpreter(target_py: Path, code: str) -> subprocess.CompletedProces
         encoding="utf-8",
         errors="replace",
         cwd=Path(target_py).parent,
+        timeout=timeout,
     )
 
 

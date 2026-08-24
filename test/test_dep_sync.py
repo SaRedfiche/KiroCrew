@@ -1010,6 +1010,25 @@ def test_every_interpreter_probe_runs_isolated_with_a_neutral_cwd(tmp_path):
         assert kwargs.get("cwd") == target.parent, "probe needs a neutral cwd"
 
 
+def test_probe_timeout_is_forwarded_and_defaults_to_unbounded(tmp_path):
+    """``timeout`` exists for callers probing UNTRUSTED candidate interpreters
+    (the STT install-target predicate bounds each probe at 5s); the default
+    must stay ``None`` so existing venv probes keep their old behaviour."""
+    target = tmp_path / "venv" / "bin" / "python"
+    target.parent.mkdir(parents=True)
+    seen = []
+
+    def fake_run(cmd, **kwargs):
+        seen.append(kwargs.get("timeout"))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    with patch.object(dep_sync.subprocess, "run", side_effect=fake_run):
+        dep_sync._probe_interpreter(target, "pass", timeout=5)
+        dep_sync._probe_interpreter(target, "pass")
+
+    assert seen == [5, None]
+
+
 def test_sync_captures_pip_output_instead_of_writing_it_to_stderr(tmp_path, capsys):
     """pip's output must reach ``emit``, never the inherited stderr.
 
