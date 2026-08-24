@@ -114,6 +114,220 @@ class DepsCacheStoreTest(unittest.TestCase):
         self.assertEqual(out["edges"][0]["source"], "inferred")
 
 
+# ── store: compare-and-set on fetched_at (#5638) ─────────────────────────────
+
+
+class DepsCacheCompareAndSetTest(unittest.TestCase):
+    """``write_deps_cache`` refuses a write whose ``fetched_at`` is not newer
+    than the stored one, so a slow rebuild cannot land an older graph over a
+    newer one and re-date it as fresh. Fail-open branches (missing / corrupt /
+    schema-stale files) still accept the write."""
+
+    NEW = [{"blocked": 2, "blocker": 1, "source": "native"}]
+    OLD = [{"blocked": 4, "blocker": 3, "source": "native"}]
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
+
+    def test_an_older_write_is_refused_and_the_stored_graph_unchanged(self):
+        now = time.time()
+        store.write_deps_cache(OWNER, REPO, self.NEW, {}, root=self.root, fetched_at=now)
+        store.write_deps_cache(OWNER, REPO, self.OLD, {}, root=self.root, fetched_at=now - 30)
+        out = store.read_deps_cache(OWNER, REPO, self.root)
+        self.assertEqual(out["edges"], self.NEW)
+        self.assertEqual(out["fetched_at"], now)  # the stamp did not move backwards
+
+    def test_a_newer_write_lands(self):
+        now = time.time()
+        store.write_deps_cache(OWNER, REPO, self.OLD, {}, root=self.root, fetched_at=now - 30)
+        store.write_deps_cache(OWNER, REPO, self.NEW, {}, root=self.root, fetched_at=now)
+        out = store.read_deps_cache(OWNER, REPO, self.root)
+        self.assertEqual(out["edges"], self.NEW)
+        self.assertEqual(out["fetched_at"], now)
+
+    def test_an_equal_stamp_is_skipped(self):
+        # >= not >: an equal stamp means the stored graph is at least as new,
+        # and two writes in the same clock tick must not flip the graph.
+        now = time.time()
+        store.write_deps_cache(OWNER, REPO, self.NEW, {}, root=self.root, fetched_at=now)
+        store.write_deps_cache(OWNER, REPO, self.OLD, {}, root=self.root, fetched_at=now)
+        self.assertEqual(store.read_deps_cache(OWNER, REPO, self.root)["edges"], self.NEW)
+
+    def test_omitting_fetched_at_defaults_to_now(self):
+        # Same default as _write_labels_cache_unlocked: an unthreaded caller
+        # still writes, stamped at the write moment.
+        before = time.time()
+        store.write_deps_cache(OWNER, REPO, self.NEW, {}, root=self.root)
+        self.assertGreaterEqual(store.read_deps_cache(OWNER, REPO, self.root)["fetched_at"], before)
+
+    def _craft_stored(self, edges: list[dict], fetched_at: float) -> None:
+        # Written directly: write_deps_cache clamps incoming stamps to "now",
+        # so a future-dated STORED stamp can only exist when the wall clock
+        # retreated AFTER a write — which is exactly what this simulates.
+        path = store.deps_cache_path(OWNER, REPO, self.root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": store.DEPS_CACHE_SCHEMA,
+                    "fetched_at": fetched_at,
+                    "edges": edges,
+                    "nodes": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def test_a_future_dated_stored_stamp_fails_open_after_a_clock_retreat(self):
+        # The wall clock retreated after a write, leaving the stored stamp far
+        # ahead of "now". Honouring it would wedge every write (including a
+        # user-forced ?refresh=1) until wall time passed it again.
+        self._craft_stored(self.OLD, time.time() + 3600)
+        now = time.time()
+        store.write_deps_cache(OWNER, REPO, self.NEW, {}, root=self.root, fetched_at=now)
+        out = store.read_deps_cache(OWNER, REPO, self.root)
+        self.assertEqual(out["edges"], self.NEW)
+        self.assertEqual(out["fetched_at"], now)
+
+    def test_a_stored_stamp_within_the_future_slack_still_orders_normally(self):
+        # Sub-slack skew is normal clock granularity, not a retreat: the CAS
+        # must still refuse an older write against it.
+        self._craft_stored(self.NEW, time.time() + 1.0)
+        store.write_deps_cache(
+            OWNER, REPO, self.OLD, {}, root=self.root, fetched_at=time.time() - 30
+        )
+        self.assertEqual(store.read_deps_cache(OWNER, REPO, self.root)["edges"], self.NEW)
+
+    def test_an_incoming_future_stamp_is_clamped_to_now(self):
+        # A clock retreat DURING the rebuild hands the write a stamp captured
+        # before the retreat. Persisting it would give the cache a negative
+        # age — reading as fresh and suppressing the automatic TTL refresh
+        # until wall time caught up.
+        store.write_deps_cache(
+            OWNER, REPO, self.NEW, {}, root=self.root, fetched_at=time.time() + 3600
+        )
+        out = store.read_deps_cache(OWNER, REPO, self.root)
+        self.assertEqual(out["edges"], self.NEW)
+        self.assertLessEqual(out["fetched_at"], time.time())
+
+    def test_pre_retreat_stamps_keep_their_ordering(self):
+        # The retreat-window race: route (newer, T2) and sweep (older, T1) both
+        # captured stamps BEFORE a clock retreat; the route wrote first, then
+        # the clock retreated, then the sweep's slow write lands. Both raw
+        # stamps are from the same pre-retreat epoch and stay mutually
+        # comparable — the sweep's older graph must still be refused. Clamping
+        # the incoming stamp or discarding the stored one before comparing
+        # would let the older graph overwrite the newer one re-dated as fresh.
+        t1 = time.time() + 3600.0  # sweep's capture, pre-retreat (older)
+        t2 = t1 + 30.0  # route's capture, pre-retreat (newer)
+        self._craft_stored(self.NEW, t2)  # route's write, stamp survived a retreat
+        store.write_deps_cache(OWNER, REPO, self.OLD, {}, root=self.root, fetched_at=t1)
+        self.assertEqual(store.read_deps_cache(OWNER, REPO, self.root)["edges"], self.NEW)
+
+    def test_a_newer_pre_retreat_write_lands_with_a_clamped_stamp(self):
+        # Mirror of the ordering test: the incoming pre-retreat stamp is NEWER
+        # than the stored pre-retreat one — the write lands, and the persisted
+        # stamp is clamped to "now" so the cache cannot carry a negative age.
+        t1 = time.time() + 3600.0
+        t2 = t1 + 30.0
+        self._craft_stored(self.OLD, t1)
+        store.write_deps_cache(OWNER, REPO, self.NEW, {}, root=self.root, fetched_at=t2)
+        out = store.read_deps_cache(OWNER, REPO, self.root)
+        self.assertEqual(out["edges"], self.NEW)
+        self.assertLessEqual(out["fetched_at"], time.time())
+
+    def test_a_missing_file_accepts_any_stamp(self):
+        store.write_deps_cache(OWNER, REPO, self.NEW, {}, root=self.root, fetched_at=1.0)
+        self.assertEqual(store.read_deps_cache(OWNER, REPO, self.root)["edges"], self.NEW)
+
+    def test_a_corrupt_file_fails_open(self):
+        path = store.deps_cache_path(OWNER, REPO, self.root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{ not json", encoding="utf-8")
+        store.write_deps_cache(OWNER, REPO, self.NEW, {}, root=self.root, fetched_at=1.0)
+        self.assertEqual(store.read_deps_cache(OWNER, REPO, self.root)["edges"], self.NEW)
+
+    def test_a_stale_schema_fails_open(self):
+        # A schema-stale file must be replaceable regardless of its stamp —
+        # otherwise a schema bump would wedge the cache permanently: the old
+        # file's (future-dated here) stamp would refuse every new-schema write
+        # while read_deps_cache keeps missing on it.
+        path = store.deps_cache_path(OWNER, REPO, self.root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": store.DEPS_CACHE_SCHEMA + 1,
+                    "fetched_at": time.time() + 10_000,
+                    "edges": [],
+                    "nodes": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        store.write_deps_cache(OWNER, REPO, self.NEW, {}, root=self.root, fetched_at=1.0)
+        out = store.read_deps_cache(OWNER, REPO, self.root)
+        self.assertIsNotNone(out)
+        self.assertEqual(out["edges"], self.NEW)
+
+    def test_an_unstamped_current_schema_file_fails_open(self):
+        path = store.deps_cache_path(OWNER, REPO, self.root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"schema": store.DEPS_CACHE_SCHEMA, "edges": [], "nodes": {}}),
+            encoding="utf-8",
+        )
+        store.write_deps_cache(OWNER, REPO, self.NEW, {}, root=self.root, fetched_at=1.0)
+        self.assertEqual(store.read_deps_cache(OWNER, REPO, self.root)["edges"], self.NEW)
+
+    def test_an_overflowing_numeric_stamp_fails_open(self):
+        # Valid JSON, valid int, absurd magnitude: float() raises OverflowError.
+        # That is corrupt data, not a stamp — the write must proceed and repair
+        # the file, not escape as a 500 and leave the corruption in place.
+        path = store.deps_cache_path(OWNER, REPO, self.root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": store.DEPS_CACHE_SCHEMA,
+                    "fetched_at": 10**400,
+                    "edges": [],
+                    "nodes": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        store.write_deps_cache(OWNER, REPO, self.NEW, {}, root=self.root, fetched_at=1.0)
+        out = store.read_deps_cache(OWNER, REPO, self.root)
+        self.assertIsNotNone(out)
+        self.assertEqual(out["edges"], self.NEW)
+
+    def test_read_deps_cache_treats_an_overflowing_stamp_as_maximally_stale(self):
+        # The READER shares the writer's exposure: the route reads the cache
+        # before it decides to rebuild, so float() raising on an absurd stored
+        # int would 500 the GET before the write-path repair ever ran. The
+        # entry must instead read as maximally stale (fetched_at 0.0) so the
+        # TTL refresh repairs it.
+        path = store.deps_cache_path(OWNER, REPO, self.root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": store.DEPS_CACHE_SCHEMA,
+                    "fetched_at": 10**400,
+                    "edges": self.OLD,
+                    "nodes": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        out = store.read_deps_cache(OWNER, REPO, self.root)
+        self.assertIsNotNone(out)
+        self.assertEqual(out["fetched_at"], 0.0)
+        self.assertEqual(out["edges"], self.OLD)
+
+
 # ── github_client.fetch_dependency_edges ─────────────────────────────────────
 
 
@@ -470,6 +684,54 @@ class DepsHandlerTest(unittest.TestCase):
         self.assertTrue(_body(res)["from_cache"])
         sched.assert_not_called()
         fetch.assert_not_called()
+
+    def test_the_route_stamps_fetch_start_not_write_completion(self):
+        # The stamp the route passes must predate the fetch, not record when
+        # the write happened — write-time stamping is the #5638 defect.
+        seen: dict[str, float] = {}
+
+        def fetch(owner, repo, issues, hints):
+            seen["fetch_entered"] = time.time()
+            return [], {}
+
+        with (
+            mock.patch.object(store, "is_repo_connected", return_value=True),
+            mock.patch.object(store, "read_deps_cache", side_effect=[None, None]),
+            mock.patch.object(routes, "_load_open_issues_for_reco", return_value=[]),
+            mock.patch.object(store, "read_pulls_cache", return_value=None),
+            mock.patch.object(store, "write_deps_cache") as write,
+            mock.patch.object(gh, "fetch_dependency_edges", side_effect=fetch),
+        ):
+            res = asyncio.run(_call("owner=o&repo=r"))
+        self.assertEqual(res.status, 200)
+        write.assert_called_once()
+        self.assertLessEqual(write.call_args.kwargs["fetched_at"], seen["fetch_entered"])
+
+    def test_the_route_stamps_before_the_issue_snapshot_load(self):
+        # The snapshot is the graph's SCOPE: the stamp must predate the oldest
+        # input of the rebuild, not just the edge fetch — a later stamp lets a
+        # rebuild scoped by a stale snapshot outrank a fresher one.
+        seen: dict[str, float] = {}
+
+        def load_issues(key):
+            seen["snapshot_loaded"] = time.time()
+            return []
+
+        def fetch(owner, repo, issues, hints):
+            return [], {}
+
+        with (
+            mock.patch.object(store, "is_repo_connected", return_value=True),
+            mock.patch.object(store, "read_deps_cache", side_effect=[None, None]),
+            mock.patch.object(routes, "_load_open_issues_for_reco", side_effect=load_issues),
+            mock.patch.object(store, "read_pulls_cache", return_value=None),
+            mock.patch.object(store, "write_deps_cache") as write,
+            mock.patch.object(gh, "fetch_dependency_edges", side_effect=fetch),
+        ):
+            res = asyncio.run(_call("owner=o&repo=r"))
+        self.assertEqual(res.status, 200)
+        write.assert_called_once()
+        self.assertLessEqual(write.call_args.kwargs["fetched_at"], seen["snapshot_loaded"])
 
     def test_empty_repo_returns_an_empty_graph(self):
         # An issues-cache MISS is unknown, not empty: the handler now resolves it
@@ -1116,6 +1378,83 @@ class SweepDepsRefreshTest(unittest.TestCase):
         ):
             out = cr._read_or_refresh_deps(self._key(), None)
         self.assertIs(out, stale)
+
+    def test_the_sweep_stamps_before_the_snapshot_read_not_write_completion(self):
+        # The stamp the sweep passes must predate its issues-snapshot read (the
+        # graph's scope input) — write-time stamping is the #5638 defect, and a
+        # post-snapshot stamp lets a stale-scoped rebuild outrank a fresher one.
+        seen: dict[str, float] = {}
+
+        def read_issues(owner, repo, scope, state="open"):
+            seen["snapshot_read"] = time.time()
+            return []
+
+        with (
+            mock.patch.object(cr.store, "read_deps_cache", return_value=None),
+            mock.patch.object(cr.store, "read_issues_cache", side_effect=read_issues),
+            mock.patch.object(cr.store, "write_deps_cache") as write,
+            mock.patch.object(gh, "fetch_dependency_edges", return_value=([], {})),
+        ):
+            cr._read_or_refresh_deps(self._key(), None)
+        write.assert_called_once()
+        self.assertLessEqual(write.call_args.kwargs["fetched_at"], seen["snapshot_read"])
+
+
+class SlowRebuildInterleaveTest(unittest.TestCase):
+    """The #5638 interleave the route-only mutex cannot cover: the sweep's
+    rebuild starts FIRST, the route's newer rebuild lands DURING it, and the
+    sweep's write completes LAST. Driven by controlled captured timestamps
+    against the real store — no sleeps."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
+
+    def test_a_slow_rebuild_cannot_overwrite_a_newer_graph(self):
+        # Older graph: #11 still reads as blocking. Newer graph: it was
+        # satisfied, the edge is gone — the transition detect_unblocks needs.
+        sweep_graph = [{"blocked": 12, "blocker": 11, "source": "native"}]
+        route_graph: list[dict] = []
+        sweep_started = time.time() - 5.0  # the sweep captured its stamp first…
+        route_started = time.time() - 1.0  # …but the route's data was read later
+
+        # The route's fast rebuild writes first; the sweep's slow one lands last.
+        store.write_deps_cache(
+            OWNER, REPO, route_graph, {}, root=self.root, fetched_at=route_started
+        )
+        store.write_deps_cache(
+            OWNER, REPO, sweep_graph, {}, root=self.root, fetched_at=sweep_started
+        )
+
+        out = store.read_deps_cache(OWNER, REPO, self.root)
+        self.assertEqual(out["edges"], route_graph)  # the newer graph survives
+        self.assertEqual(out["fetched_at"], route_started)  # stamp not moved backwards
+
+    def test_the_sweep_serves_the_stored_newer_graph_after_losing(self):
+        # Caller-level: the route's newer write lands while the sweep's fetch is
+        # in flight. The sweep's own write is skipped and its re-read returns
+        # the route's graph — the loser serves what is actually on disk.
+        key = provider.RepoKey(owner=OWNER, repo=REPO, provider="github")
+        route_graph = [{"blocked": 2, "blocker": 1, "source": "native"}]
+        sweep_graph = [{"blocked": 4, "blocker": 3, "source": "native"}]
+
+        def fetch_with_interleaved_route_write(owner, repo, issues, hints):
+            # The route's fetch happened a moment after the sweep captured its
+            # stamp — newer, but a realistic wall-clock instant (a far-future
+            # stamp would instead trip the clock-retreat fail-open guard).
+            store.write_deps_cache(
+                owner, repo, route_graph, {}, root=self.root, fetched_at=time.time() + 1
+            )
+            return sweep_graph, {}
+
+        with (
+            mock.patch.object(cr.store, "read_issues_cache", return_value=[{"number": 4}]),
+            mock.patch.object(
+                gh, "fetch_dependency_edges", side_effect=fetch_with_interleaved_route_write
+            ),
+        ):
+            out = cr._read_or_refresh_deps(key, self.root)
+        self.assertEqual(out["edges"], route_graph)
 
 
 class SweepUnknownScopeTest(unittest.TestCase):
