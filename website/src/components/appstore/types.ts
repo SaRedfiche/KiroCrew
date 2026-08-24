@@ -67,6 +67,14 @@ export type InstalledApp = {
   installedAt: string
   source?: string
   origin?: string     // "builtin" | "registry" | "local" | "external"
+  /**
+   * The git URL this app was installed from, recorded at install time. It is
+   * the only repo identifier that survives independently of the store's
+   * registry caches, so art resolution falls back to it when neither the row
+   * nor the manifest names a repo. Empty on a built-in, a local-directory
+   * install, and on records written before provenance was captured.
+   */
+  sourceUrl?: string
   resources?: string  // "gateway" | "app"
   lifecycle?: string  // "gateway" | "app" | "locked"
   migratedTo?: string
