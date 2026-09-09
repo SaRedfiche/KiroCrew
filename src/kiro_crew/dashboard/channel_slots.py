@@ -576,6 +576,8 @@ def surface_channel_session(
         slot.memory_store = str(meta["memory_store"])
     if meta.get("project"):
         slot.project = meta["project"]
+    if meta.get("project_group_id"):
+        slot.project_group_id = str(meta["project_group_id"])
     if meta.get("channel_folder_filed"):
         slot._channel_folder_filed = True
     # Persisted tags are applied on EVERY surface, not just first filing: the

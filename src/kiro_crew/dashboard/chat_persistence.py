@@ -1527,6 +1527,8 @@ def _rehydrate_slot_from_history(
             slot.agent_kind = meta["agent_kind"]
         if meta.get("project"):
             slot.project = meta["project"]
+        if meta.get("project_group_id"):
+            slot.project_group_id = str(meta["project_group_id"])
         # Restore the remote executor marker INDEPENDENTLY of its target fields.
         # history JSONL is a file on disk, so a truncated write or a hand-edit can
         # leave the ``executor="remote"`` marker without a valid instance_id /
@@ -2179,6 +2181,8 @@ def _apply_recent_session(
         slot.agent_kind = meta["agent_kind"]
     if meta.get("project"):
         slot.project = meta["project"]
+    if meta.get("project_group_id"):
+        slot.project_group_id = str(meta["project_group_id"])
     if _member_identity is None and (_mode := _restored_mode(meta.get("mode"))):
         slot.mode = _mode
     if meta.get("created_by"):
@@ -3736,6 +3740,7 @@ def _save_slot_to_history(
                 # omitting a cleared project leaves the previous directory on disk to be read
                 # back as though the clear never happened.
                 fields["project"] = slot.project
+                fields["project_group_id"] = slot.project_group_id
                 if slot._app:
                     fields["app"] = slot._app
                 if slot._origin:
@@ -4119,6 +4124,8 @@ def _save_slot_to_history(
                 meta_line["agent_kind"] = slot.agent_kind
             if slot.project:
                 meta_line["project"] = slot.project
+            if slot.project_group_id:
+                meta_line["project_group_id"] = slot.project_group_id
             # Remote-execution binding. All three are written together or not at
             # all: a half-restored binding (executor="remote" with no peer slot)
             # is the fail-closed refusal case, so persisting the marker without
