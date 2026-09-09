@@ -3236,6 +3236,10 @@ class _ChatSlot:
         "mode",
         "workspace",
         "project",
+        # Project-coordination grouping tag (Phase 1). NOT the cwd path
+        # (``project``); this is an opaque id into ``projects.json`` grouping
+        # sibling sessions that work the same project. Empty = untagged.
+        "project_group_id",
         "created_at",
         "messages",
         "total_messages",
@@ -3430,6 +3434,9 @@ class _ChatSlot:
         self.mode = mode
         self.workspace = workspace
         self.project: str = ""
+        # Project-coordination grouping tag (Phase 1): opaque id into
+        # projects.json, distinct from ``project`` (the cwd path). "" = untagged.
+        self.project_group_id: str = ""
         # Remote-execution binding. ``executor`` is "local" for every ordinary
         # slot; "remote" means the turn is dispatched over an instance tunnel to
         # ``instance_id`` and run by the peer's slot ``remote_slot``. The local

@@ -849,6 +849,9 @@ async def api_chat_slot_fork(request: web.Request) -> web.Response:
     # context (agent resolution, steering files, CWD) instead of falling back to
     # the config/workspace default on first message.
     new_slot.project = slot.project
+    # Inherit the project-coordination tag (Phase 1): a fork works the same
+    # project as its parent, so it joins the same group.
+    new_slot.project_group_id = slot.project_group_id
     # Inherit the sidebar folder so the fork appears next to its parent in the UI.
     new_slot.folder_id = slot.folder_id
     # Inherit tags (copied, so later edits to either slot's list stay independent).

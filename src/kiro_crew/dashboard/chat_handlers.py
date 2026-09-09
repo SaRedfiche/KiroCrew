@@ -7666,6 +7666,10 @@ async def api_chat_slot_workspace(request: web.Request) -> web.Response:
             )
         prior_workspace = slot.workspace
         prior_project = slot.project
+        # Project-coordination tag is workspace-scoped, so a workspace switch
+        # clears it (a group in workspace A does not carry into workspace B).
+        # Captured for rollback; restored on any 409 path below.
+        prior_project_group_id = slot.project_group_id
         # Commit as identity tokens (the agent handler's _CommitToken
         # precedent): ``slot.project`` has lock-free writers -- the in-turn
         # set_project directive lands during the reset await -- so a rollback
@@ -7675,6 +7679,8 @@ async def api_chat_slot_workspace(request: web.Request) -> web.Response:
         committed_project = _CommitToken(default_project_dir(ws_name))
         slot.workspace = committed_workspace
         slot.project = committed_project
+        # Clear the workspace-scoped coordination tag on the switch.
+        slot.project_group_id = ""
         logger.info("Slot %s workspace switched to %r, resetting session", name, ws_name)
 
         def _rollback() -> None:
@@ -7692,6 +7698,10 @@ async def api_chat_slot_workspace(request: web.Request) -> web.Response:
                 slot.workspace = prior_workspace
             if slot.project is committed_project:
                 slot.project = prior_project
+            # Restore the coordination tag only if the switch's clear still
+            # stands (a concurrent tagging write would have set a new value).
+            if not slot.project_group_id:
+                slot.project_group_id = prior_project_group_id
             slot._dirty = True
 
         # skip_if_busy: message dispatch does not take slot._lock, so a send
@@ -8920,6 +8930,8 @@ async def api_chat_slot_resume(request: web.Request) -> web.Response:
         slot.workspace = meta["workspace"]
     if meta.get("project"):
         slot.project = meta["project"]
+    if meta.get("project_group_id"):
+        slot.project_group_id = str(meta["project_group_id"])
     if meta.get("channel_folder_filed"):
         # Resuming from History must carry the filing marker forward, or the
         # next save of this slot drops it and the conversation is re-filed.
