@@ -1721,18 +1721,30 @@ async def api_chat_slot_project_group(request: web.Request) -> web.Response:
         )
     project_group_id = (raw_id or "").strip()
     project_name = (raw_name or "").strip()
-    if project_group_id and project_name:
+    if project_group_id and raw_name is not None:
         # Ambiguous: attach-existing and create-new are mutually exclusive.
         return web.json_response(
             {"error": "supply project_group_id OR name, not both", "code": "ambiguous_target"},
             status=400,
         )
+    if raw_name is not None and not project_name:
+        # A present but blank/whitespace name is a malformed CREATE, NOT an
+        # untag: untag is signalled by OMITTING name (and an empty id), so a
+        # caller who sent "name" clearly meant to create. Treating a blank name
+        # as an untag would silently ERASE an existing project tag (GPT-review
+        # data-loss BLOCK). Reject it; untag stays the name-absent path below.
+        return web.json_response(
+            {"error": "project name is required", "code": "empty_name"}, status=400
+        )
 
     if project_group_id:
-        # ATTACH: the id must already exist — lookup never mints, so an unknown
-        # id would strand a dangling tag readers bucket as "unknown project".
-        # (Read-only check; the store is re-consulted transactionally by the
-        # mutation path anyway. Cheap fail-fast before we take the slot lock.)
+        # ATTACH: fail-fast if the id is unknown. This read is ADVISORY, not
+        # transactional — a project deleted between here and the tag commit
+        # would leave a dangling tag. That is tolerated by design: the store's
+        # delete-always-proceeds contract means readers already bucket a
+        # dangling project_group_id as "unknown project" (never a crash), so we
+        # do not re-check under the lock. This only rejects the common
+        # never-existed case cheaply before taking the slot lock.
         if state.projects.get_project(project_group_id) is None:
             return web.json_response(
                 {"error": "project not found", "code": "project_not_found"}, status=404

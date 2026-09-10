@@ -127,24 +127,27 @@ class TestChatSlotProjectGroup:
                 assert (await resp.json())["code"] == "bad_project_group_id"
 
     @pytest.mark.asyncio
-    async def test_blank_name_rejected(self, tmp_path):
+    async def test_blank_name_is_400_not_untag(self, tmp_path):
+        """A present but whitespace-only `name` is a malformed CREATE -> 400,
+        NOT a silent untag. Untag is the name-ABSENT path; treating a blank name
+        as untag would erase an existing tag (GPT-review data-loss BLOCK)."""
         slot = _ChatSlot("test")
+        slot.project_group_id = "grp-keep"  # already tagged
         state = _mock_state(tmp_path, slot)
         with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop"):
             async with TestClient(TestServer(_make_app(state))) as client:
-                # A name that is only whitespace: not an untag (untag is empty
-                # body / empty id), and the store rejects an empty name.
                 resp = await client.post(
                     "/api/chat/slots/test/project-group", json={"name": "   "}
                 )
-                # "   ".strip() == "" -> treated as untag (both empty), 200 + cleared.
-                assert resp.status == 200
-                assert slot.project_group_id == ""
+                assert resp.status == 400
+                assert (await resp.json())["code"] == "empty_name"
+                # The existing tag is NOT erased.
+                assert slot.project_group_id == "grp-keep"
 
     @pytest.mark.asyncio
-    async def test_save_refusal_rolls_back_and_409(self, tmp_path):
-        """If save_slot_off_loop refuses (session gone/rebound), the field is
-        rolled back to its prior value and the response is 409."""
+    async def test_save_refusal_attach_rolls_back_and_409(self, tmp_path):
+        """Attach-existing path: if save_slot_off_loop refuses, the field rolls
+        back to its prior value and the response is 409."""
         slot = _ChatSlot("test")
         slot.project_group_id = "grp-prior"
         state = _mock_state(tmp_path, slot)
@@ -286,25 +289,3 @@ class TestChatSlotProjectGroup:
                     headers={"Content-Type": "application/json"},
                 )
                 assert resp.status == 400
-
-    @pytest.mark.asyncio
-    async def test_save_refusal_rolls_back_and_409(self, tmp_path):
-        """If save_slot_off_loop refuses (session gone/rebound), the field is
-        rolled back to its prior value and the response is 409."""
-        slot = _ChatSlot("test")
-        slot.project_group_id = "grp-prior"
-        state = _mock_state(tmp_path, slot)
-        state.projects.create_project("Target", project_id="grp-new")
-        with patch(
-            "kiro_crew.dashboard.chat_folders.save_slot_off_loop", return_value=False
-        ):
-            async with TestClient(TestServer(_make_app(state))) as client:
-                resp = await client.post(
-                    "/api/chat/slots/test/project-group",
-                    json={"project_group_id": "grp-new"},
-                )
-                assert resp.status == 409
-                assert (await resp.json())["code"] == "session_gone"
-                # Rolled back to the prior tag, not left on grp-new.
-                assert slot.project_group_id == "grp-prior"
-                assert slot._dirty is True
