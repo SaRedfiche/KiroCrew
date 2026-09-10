@@ -746,6 +746,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     relay_mode = not ws_mode and request.query.get("relay") == "1"
     slot._has_reader = not ws_mode  # Only block SSE broadcast if HTTP SSE reader
     slot._file_changes = []  # Reset file-change accumulator for the new turn
+    slot._collision_writes = []  # Reset Signal-1 write accumulator for the new turn
     # ── Sweep orphaned permissions from prior turns ──
     _sweep_stale_permissions(slot)
 

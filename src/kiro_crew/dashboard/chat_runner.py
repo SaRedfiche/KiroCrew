@@ -77,6 +77,7 @@ from kiro_crew.dashboard.chat_delivery import (
     find_written_steer_row,
 )
 from kiro_crew.dashboard.chat_persistence import _build_history_prefix, save_slot_off_loop
+from kiro_crew.dashboard.collision_derive import derive_repo_context, repo_rel_for
 from kiro_crew.dashboard.chat_summary import generate_session_summary
 from kiro_crew.dashboard.chat_title import (
     _extract_and_redact_plan_metadata,
@@ -1356,6 +1357,9 @@ def _context_usage_payload(slot_key: str, client: Any) -> dict[str, Any]:
 # renders these as file-change chips with click-through to a Monaco diff.
 
 _WRITE_COMMANDS = frozenset({"create", "strReplace", "insert"})
+# Cap distinct paths a single turn's collision flush derives, so a pathological
+# write burst cannot fan out unbounded off-loop work (Security-review Medium).
+_MAX_COLLISION_PATHS_PER_FLUSH = 64
 _MAX_SNAPSHOT = 200_000  # cap per-file snapshot to bound message meta size
 # Reconstruction reads the whole file synchronously on the event loop; past
 # this size the stored snapshot is truncated to _MAX_SNAPSHOT anyway, so
@@ -1686,6 +1690,78 @@ def _flush_file_changes(slot: "_ChatSlot") -> None:
     # covers both branches and cannot be missed by a later edit.)
     slot._dirty = True
     slot._file_changes = []
+
+
+async def _flush_collision_writes(state: Any, slot: "_ChatSlot", session: str) -> None:
+    """Drain this turn's file-write paths into the same-file collision index.
+
+    Runs OFF the hot loop (git derivation stats disk / spawns git), on every
+    turn-exit path alongside ``_flush_file_changes``. For each written path it
+    derives (repo_id, repo_rel_path) relative to the session's cwd and records
+    an edit keyed by the session's project tag. Untagged sessions, out-of-tree
+    writes, sensitive paths, and non-repo cwds are dropped (no entry). Never
+    raises into the caller — a derive miss just means no collision row.
+
+    Design §4.2 Signal 1: the entry is (project_group_id, repo_id,
+    repo_rel_path, session, ts); the DISTINCT-session collision math lives in
+    ``CollisionIndex`` and is evaluated later against live sessions.
+    """
+    writes = getattr(slot, "_collision_writes", None)
+    if not isinstance(writes, list):
+        return
+    # Reset eagerly so a mid-flush error cannot double-count next turn; we work
+    # on a local snapshot. (Mirrors _flush_file_changes' end-of-turn reset.)
+    paths = list(writes)
+    slot._collision_writes = []
+    index = getattr(state, "collisions", None)
+    if index is None:
+        return
+    project_group_id = getattr(slot, "project_group_id", "") or ""
+    cwd = getattr(slot, "project", "") or ""
+    record = bool(project_group_id and cwd and paths)  # this turn has edits to record
+
+    def _derive_and_record() -> None:
+        # ALWAYS sweep window-expired rows across ALL keys first: record_edit
+        # prunes only the key it writes, so a session that moved on to other
+        # files (or an untagged/no-cwd turn) would otherwise leave old keys
+        # resident for the process lifetime (GPT-review unbounded-memory BLOCK).
+        # O(keys), off-loop, every turn — the natural cadence.
+        index.prune()
+        if not record:
+            return
+        ctx = derive_repo_context(cwd)
+        if ctx is None:
+            return
+        # Cap distinct paths derived per flush: a collision only needs a file to
+        # appear once, so an unbounded write burst cannot fan out unbounded work.
+        seen: set[str] = set()
+        for p in paths:
+            if p in seen:
+                continue
+            seen.add(p)
+            if len(seen) > _MAX_COLLISION_PATHS_PER_FLUSH:
+                break
+            # Skip sensitive-path writes explicitly (design §4.2): a rejected
+            # path yields None from validate_file_path.
+            try:
+                if validate_file_path(p) is None:
+                    continue
+            except Exception:
+                continue
+            rel = repo_rel_for(ctx.repo_root, p)  # pure FS math, no git
+            if rel is None:
+                continue  # out-of-tree -> drop
+            index.record_edit(
+                project_group_id=project_group_id,
+                repo_id=ctx.repo_id,
+                repo_rel_path=rel,
+                session=session,
+            )
+
+    try:
+        await asyncio.to_thread(_derive_and_record)
+    except Exception:
+        logger.debug("collision flush failed for session %s", session, exc_info=True)
 
 
 def _attach_turn_stats(
@@ -7925,6 +8001,12 @@ async def _run_chat(
                 )
                 if _file_snapshot:
                     slot._file_changes.append(_file_snapshot)
+                    # Signal 1 (same-file collision): remember the path written
+                    # this turn. Cheap list append on the hot loop; the repo
+                    # derivation + index record happen off-loop in the flush.
+                    _p = _file_snapshot.get("path")
+                    if _p:
+                        slot._collision_writes.append(_p)
                 state.broadcast_ws(
                     "tool_call",
                     _tool_payload,
@@ -8114,6 +8196,9 @@ async def _run_chat(
                     )
                     if _file_snapshot_upd:
                         slot._file_changes.append(_file_snapshot_upd)
+                        _p_upd = _file_snapshot_upd.get("path")
+                        if _p_upd:
+                            slot._collision_writes.append(_p_upd)  # Signal 1 (see above)
                     # Refresh the toolLog entry (sseToolActivity merges by id).
                     state.broadcast_ws(
                         "tool_call",
@@ -11391,6 +11476,8 @@ async def _run_chat(
             )
             # Attach accumulated file changes to last assistant message before persist
             _flush_file_changes(slot)
+            # Signal 1: drain this turn's writes into the collision index (off-loop).
+            await _flush_collision_writes(state, slot, session_key)
             # Save to history and trigger memory consolidation
             await save_slot_off_loop(state, slot)
         # Reset ALL retry budgets once the cycle completes (success OR the
@@ -12527,6 +12614,10 @@ async def _run_chat(
             _flush_file_changes(slot)
         except Exception:
             logger.debug("_flush_file_changes failed", exc_info=True)
+        try:
+            await _flush_collision_writes(state, slot, session_key)  # Signal 1
+        except Exception:
+            logger.debug("_flush_collision_writes failed", exc_info=True)
         # This turn consumed the one-shot post-compaction re-injection flag but
         # never landed, so the prompt carrying the skills index was discarded —
         # an early return (stale-recover / tool-stall / error re-queue), an

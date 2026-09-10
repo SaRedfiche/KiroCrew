@@ -86,6 +86,7 @@ from kiro_crew.preview_text import strip_markdown_preview
 from kiro_crew.release_channel import channel as _release_channel_of_build
 from kiro_crew.safety_override import cached_disabled_approval_modes, safety_override
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
+from kiro_crew.dashboard.collision_index import CollisionIndex
 from kiro_crew.sel import sel
 
 if TYPE_CHECKING:
@@ -3384,6 +3385,7 @@ class _ChatSlot:
         "_frozen_prefix_cache",
         "_pending_rewrite",
         "_file_changes",
+        "_collision_writes",
         "linked_session_key",
         # Remote-execution binding: this slot lives in the LOCAL list and local
         # history, but its turns run on a connected peer crew. See
@@ -3998,6 +4000,12 @@ class _ChatSlot:
         self._file_changes: list[dict[str, str]] = (
             []
         )  # [{path, content}] before-snapshots accumulated per turn for file-chip diffs
+        # Same-file collision (Signal 1): per-turn absolute paths written by the
+        # file tool, accumulated on the hot loop as a cheap list append and
+        # drained OFF-loop by the per-turn flush (which derives repo_id /
+        # repo_rel_path and records into state.collisions). Separate from
+        # _file_changes so the flush that feeds file-chip diffs is untouched.
+        self._collision_writes: list[str] = []
         self.linked_session_key: str = ""  # when set, _run_chat uses this as session key
         # Where the turn CURRENTLY in flight actually started, as opposed to
         # where the slot would route a new one. The two diverge whenever the
@@ -4967,6 +4975,13 @@ class DashboardState:
         # boot chain and test-state (__new__) construction need not thread it;
         # constructs a store at config_dir() when the caller does not supply one.
         self.projects = projects if projects is not None else _default_project_store()
+        # Same-file collision index (Signal 1). In-memory, process-local runtime
+        # state — NOT a durable store: collision data is recency-windowed and
+        # only meaningful against currently-live sessions, so nothing survives a
+        # restart. Fed off-loop from the per-turn file-write flush. The live
+        # READ path (project panel / notify) is NOT wired yet — it lands with
+        # Signal 2 in the next commit; today only record_edit has a caller.
+        self.collisions = CollisionIndex()
         self.start_time = start_time
         # Published only at the final boot-to-ready boundary in server.py.
         # The socket binds earlier, so /api/ready can truthfully return 503
