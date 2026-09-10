@@ -48,6 +48,9 @@ def register(app: web.Application) -> None:
     app.router.add_patch("/api/chat/slots/{slot}/folder", chat.api_chat_slot_folder)
     app.router.add_patch("/api/chat/slots/{slot}/pin", chat.api_chat_slot_pin)
     app.router.add_patch("/api/chat/slots/{slot}/mode", chat.api_chat_slot_mode)
+    app.router.add_post(
+        "/api/chat/slots/{slot}/project-group", chat.api_chat_slot_project_group
+    )
     # Message pins
     app.router.add_get("/api/chat/pins", chat.api_chat_pins_list)
     app.router.add_post("/api/chat/pins", chat.api_chat_pins_create)
