@@ -100,11 +100,25 @@ if TYPE_CHECKING:
         TaskRunner,
     )
     from kiro_crew.dashboard.loop_watchdog import LoopStallWatchdog  # noqa: F401
+    from kiro_crew.dashboard.project_store import ProjectStore  # noqa: F401
     from kiro_crew.messaging.transport import MessagingTransport  # noqa: F401
     from kiro_crew.power import SleepInhibitor  # noqa: F401
     from kiro_crew.slack.outbound import PostedOptions  # noqa: F401
 
 logger = logging.getLogger(__name__)
+
+
+def _default_project_store() -> "ProjectStore":
+    """Construct a ProjectStore at the default data dir.
+
+    Imported lazily (not at module top) because state.py is imported very
+    broadly and the store pulls in the atomic-write/config-paths chain; a
+    function-local import keeps that off the module-load path and avoids any
+    import cycle, while still yielding one shared instance per DashboardState.
+    """
+    from kiro_crew.dashboard.project_store import ProjectStore
+
+    return ProjectStore()
 
 #: Cache for :meth:`DashboardState.served_bundle_id` — the served frontend
 #: entry point's ``(mtime_ns, size)`` -> short content hash. One slot: there is
@@ -4941,10 +4955,18 @@ class DashboardState:
         task_runner: TaskRunner | None = None,
         slack_client: Any = None,
         owner_id: str = "",
+        projects: "ProjectStore | None" = None,
     ):
         self.sessions = sessions
         self.crons = crons
         self.lessons = lessons
+        # Project-coordination record store (project_group_id -> {id,name,repos[]}).
+        # A shared, long-lived instance like self.crons/self.lessons: its
+        # mutations _sync_for_write under flock so the shared cache stays current
+        # on writes, and its reads are cache-only by design. Defaulted so the
+        # boot chain and test-state (__new__) construction need not thread it;
+        # constructs a store at config_dir() when the caller does not supply one.
+        self.projects = projects if projects is not None else _default_project_store()
         self.start_time = start_time
         # Published only at the final boot-to-ready boundary in server.py.
         # The socket binds earlier, so /api/ready can truthfully return 503

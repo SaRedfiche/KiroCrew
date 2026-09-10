@@ -17,6 +17,8 @@ from kiro_crew.dashboard.chat_persistence import save_slot_off_loop
 from kiro_crew.dashboard.chat_tags import tags_write_lock, validate_folder_tag_ids
 from kiro_crew.dashboard.chat_utils import effective_session_key, slot_history_key
 from kiro_crew.dashboard.create_rate_limit import FOLDER_CREATE, allow_create
+from kiro_crew.dashboard.handlers._shared import read_bounded_json
+from kiro_crew.dashboard.project_store import ProjectStoreBusy
 from kiro_crew.dashboard.state import DashboardState
 from kiro_crew.dashboard.token_auth import caller_names_a_missing_slot, derive_caller_app
 from kiro_crew.executors import subprocess_executor
@@ -1648,3 +1650,154 @@ async def api_chat_slot_mode(request: web.Request) -> web.Response:
         resources=name,
     )
     return web.json_response({"ok": True, "mode": slot.mode})
+
+
+async def api_chat_slot_project_group(request: web.Request) -> web.Response:
+    """POST /api/chat/slots/{slot}/project-group — tag a session with a project.
+
+    Shape A (create-or-attach-or-untag), one endpoint:
+
+    * ``{"project_group_id": "<id>"}`` — attach to an EXISTING project by id.
+      A missing id is a 404 (``project_not_found``) — the store never mints an
+      id on lookup, so attaching to an unknown id would strand a dangling tag.
+    * ``{"name": "<name>"}`` with no id — CREATE a project (server mints the id,
+      the store requires a caller-minted one) and attach the session to it.
+    * ``{}`` / ``{"project_group_id": ""}`` — UNTAG (clear the field).
+
+    Body must carry at most one of ``project_group_id`` / ``name``; supplying
+    both is a 400 (ambiguous — attach-existing vs create-new). The store is the
+    project record table (see ``project_store.ProjectStore``); this handler is
+    its only validated writer. Mirrors ``api_chat_slot_folder`` for the slot
+    ownership, rebind re-check, persist-with-rollback, and audit spans.
+    """
+
+    state: DashboardState = request.app["state"]
+    name = request.match_info["slot"]
+    slot = state._slots.get(name)
+    if not slot:
+        return web.json_response({"error": "not found"}, status=404)
+    # App ownership (App Kit §5.2) — deny-by-default, same as api_chat_slot_folder:
+    # tagging writes a session's own state (the tag re-injects on that session's
+    # next turn and joins it to a project group), so an app must not reach a
+    # session it does not own. Same 404 for both reasons (no existence oracle).
+    request_app = _effective_request_app(state, request)
+    if request_app and getattr(slot, "_app", "") != request_app:
+        sel().log_api_access(
+            caller=request_app,
+            operation="chat.slot_project_group",
+            outcome="denied",
+            source="app_isolation",
+            resources=f"slot={slot.key}",
+            error=(
+                "app cannot access unscoped slots"
+                if not getattr(slot, "_app", "")
+                else "app does not own this slot"
+            ),
+        )
+        return web.json_response({"error": "not found", "code": "slot_not_found"}, status=404)
+    # Capture the transcript key the ownership decision covered, BEFORE the
+    # body-parse await (same rebind window as api_chat_slot_folder).
+    authorized_history_key = slot_history_key(slot)
+    # Shared object-body guard (issue #5587): a valid-but-non-object JSON body
+    # ([], "s", 5, true, null) would otherwise reach the .get() below and turn a
+    # client mistake into a 500. allow_absent so a bare POST with no body is an
+    # untag (all fields default). Bounded cap: the body is a fixed set of
+    # control fields (an id or a name).
+    body, err = await read_bounded_json(request, allow_absent=True)
+    if err is not None:
+        return err
+
+    # ── validate + resolve the target project id (no store WRITE yet) ─────────
+    raw_id = body.get("project_group_id")
+    raw_name = body.get("name")
+    if raw_id is not None and not isinstance(raw_id, str):
+        return web.json_response(
+            {"error": "project_group_id must be a string", "code": "bad_project_group_id"},
+            status=400,
+        )
+    if raw_name is not None and not isinstance(raw_name, str):
+        return web.json_response(
+            {"error": "name must be a string", "code": "bad_name"}, status=400
+        )
+    project_group_id = (raw_id or "").strip()
+    project_name = (raw_name or "").strip()
+    if project_group_id and project_name:
+        # Ambiguous: attach-existing and create-new are mutually exclusive.
+        return web.json_response(
+            {"error": "supply project_group_id OR name, not both", "code": "ambiguous_target"},
+            status=400,
+        )
+
+    if project_name:
+        # CREATE: server mints the id (the store requires a caller-minted id),
+        # then we attach the session to the freshly created record.
+        try:
+            record = state.projects.create_project(project_name, project_id=uuid.uuid4().hex[:12])
+        except ValueError as exc:
+            return web.json_response(
+                {"error": str(exc), "code": "invalid_project"}, status=400
+            )
+        except ProjectStoreBusy:
+            return web.json_response(
+                {"error": "project store busy, retry", "code": "store_busy"}, status=503
+            )
+        project_group_id = record.id
+    elif project_group_id:
+        # ATTACH: the id must already exist — lookup never mints, so an unknown
+        # id would strand a dangling tag readers bucket as "unknown project".
+        if state.projects.get_project(project_group_id) is None:
+            return web.json_response(
+                {"error": "project not found", "code": "project_not_found"}, status=404
+            )
+    # else: both empty -> UNTAG (project_group_id stays "").
+
+    # ── serialize re-check / mutate / persist / rollback (folder pattern) ─────
+    async with _slot_meta_txn_lock(state):
+        if state._slots.get(name) is not slot or slot_history_key(slot) != authorized_history_key:
+            source, caller = _audit_origin(request)
+            sel().log_api_access(
+                caller=caller,
+                operation="chat.slot_project_group",
+                outcome="denied",
+                source=source,
+                resources=name,
+                error="session was deleted or rebound",
+            )
+            return web.json_response(
+                {"error": "session was deleted or rebound", "code": "session_gone"}, status=409
+            )
+        previous = slot.project_group_id
+        slot.project_group_id = project_group_id  # "" on the untag path
+        # NO await between the re-check and the mutation above.
+        if not await save_slot_off_loop(
+            state, slot, force=True, expected_history_key=authorized_history_key
+        ):
+            # Refused without writing: session deleted/rebound mid-persist. Roll
+            # back only while the field still holds THIS request's value (same
+            # guard as api_chat_slot_folder), and mark dirty so the periodic
+            # flush reconverges any provisional value it may have persisted.
+            if slot.project_group_id == project_group_id:
+                slot.project_group_id = previous
+            slot._dirty = True
+            source, caller = _audit_origin(request)
+            sel().log_api_access(
+                caller=caller,
+                operation="chat.slot_project_group",
+                outcome="denied",
+                source=source,
+                resources=name,
+                error="session was deleted or rebound",
+            )
+            return web.json_response(
+                {"error": "session was deleted or rebound", "code": "session_gone"}, status=409
+            )
+    state.push_slots_update()
+    source, caller = _audit_origin(request)
+    sel().log_api_access(
+        caller=caller,
+        operation="chat.slot_project_group",
+        outcome="allowed",
+        source=source,
+        resources=name,
+    )
+    return web.json_response({"ok": True, "project_group_id": slot.project_group_id})

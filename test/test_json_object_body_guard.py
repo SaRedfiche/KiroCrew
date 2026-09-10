@@ -160,6 +160,12 @@ _CAP_REASONS = {
 _CAP_REGISTER: dict[str, tuple[str, str]] = {
     # Pre-existing capped sites -- the bounded read's live consumers.
     "chat_pins.py::api_chat_pins_create": ("<default>", _BOUNDED_BY_DEFAULT),
+    # Project-coordination tagging: the body is {project_group_id?} or {name?},
+    # a fixed set of short control fields, so the shared default cap is right.
+    "chat_folders.py::api_chat_slot_project_group": (
+        "<default>",
+        _BOUNDED_CONTROL_FIELDS,
+    ),
     # Voice config is a flat set of short scalars (provider name, voice name,
     # rate, paths) and voice synthesis takes one reply's text, which the panel
     # already truncates well below the shared default. Neither has a legitimate
