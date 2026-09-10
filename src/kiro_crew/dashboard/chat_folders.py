@@ -1728,30 +1728,21 @@ async def api_chat_slot_project_group(request: web.Request) -> web.Response:
             status=400,
         )
 
-    if project_name:
-        # CREATE: server mints the id (the store requires a caller-minted id),
-        # then we attach the session to the freshly created record.
-        try:
-            record = state.projects.create_project(project_name, project_id=uuid.uuid4().hex[:12])
-        except ValueError as exc:
-            return web.json_response(
-                {"error": str(exc), "code": "invalid_project"}, status=400
-            )
-        except ProjectStoreBusy:
-            return web.json_response(
-                {"error": "project store busy, retry", "code": "store_busy"}, status=503
-            )
-        project_group_id = record.id
-    elif project_group_id:
+    if project_group_id:
         # ATTACH: the id must already exist — lookup never mints, so an unknown
         # id would strand a dangling tag readers bucket as "unknown project".
+        # (Read-only check; the store is re-consulted transactionally by the
+        # mutation path anyway. Cheap fail-fast before we take the slot lock.)
         if state.projects.get_project(project_group_id) is None:
             return web.json_response(
                 {"error": "project not found", "code": "project_not_found"}, status=404
             )
-    # else: both empty -> UNTAG (project_group_id stays "").
+    # For the CREATE path we do NOT write the record here: create_project is
+    # committed INSIDE the lock below, only after the slot re-check passes, so a
+    # rebound/deleted slot (409) or a refused save cannot strand an orphan
+    # project record (Correctness-review HIGH). else (both empty) -> UNTAG.
 
-    # ── serialize re-check / mutate / persist / rollback (folder pattern) ─────
+    # ── serialize re-check / (create) / mutate / persist / rollback ──────────
     async with _slot_meta_txn_lock(state):
         if state._slots.get(name) is not slot or slot_history_key(slot) != authorized_history_key:
             source, caller = _audit_origin(request)
@@ -1766,9 +1757,29 @@ async def api_chat_slot_project_group(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": "session was deleted or rebound", "code": "session_gone"}, status=409
             )
+        if project_name:
+            # CREATE now that the attach is guaranteed to be applied to a live,
+            # still-authorized slot: the record and the slot tag commit together,
+            # so a failed persist below rolls back the tag AND leaves no orphan
+            # record (create_project's flock is a leaf acquisition — no cycle
+            # with the slot-meta txn lock). Server mints the id (store requires
+            # a caller-minted one).
+            try:
+                record = state.projects.create_project(
+                    project_name, project_id=uuid.uuid4().hex[:12]
+                )
+            except ValueError as exc:
+                return web.json_response(
+                    {"error": str(exc), "code": "invalid_project"}, status=400
+                )
+            except ProjectStoreBusy:
+                return web.json_response(
+                    {"error": "project store busy, retry", "code": "store_busy"}, status=503
+                )
+            project_group_id = record.id
         previous = slot.project_group_id
         slot.project_group_id = project_group_id  # "" on the untag path
-        # NO await between the re-check and the mutation above.
+        # NO await between the re-check/create and the mutation above.
         if not await save_slot_off_loop(
             state, slot, force=True, expected_history_key=authorized_history_key
         ):
@@ -1779,6 +1790,13 @@ async def api_chat_slot_project_group(request: web.Request) -> web.Response:
             if slot.project_group_id == project_group_id:
                 slot.project_group_id = previous
             slot._dirty = True
+            # Compensate the CREATE: if THIS request minted the record, the tag
+            # it was created for did not persist, so delete it rather than leave
+            # an orphan project nothing references (Correctness-review HIGH). We
+            # are still under the slot-meta lock and just minted the id, so no
+            # concurrent session attached to it in this window.
+            if project_name:
+                state.projects.delete_project(project_group_id)
             source, caller = _audit_origin(request)
             sel().log_api_access(
                 caller=caller,

@@ -142,6 +142,113 @@ class TestChatSlotProjectGroup:
                 assert slot.project_group_id == ""
 
     @pytest.mark.asyncio
+    async def test_save_refusal_rolls_back_and_409(self, tmp_path):
+        """If save_slot_off_loop refuses (session gone/rebound), the field is
+        rolled back to its prior value and the response is 409."""
+        slot = _ChatSlot("test")
+        slot.project_group_id = "grp-prior"
+        state = _mock_state(tmp_path, slot)
+        state.projects.create_project("Target", project_id="grp-new")
+        with patch(
+            "kiro_crew.dashboard.chat_folders.save_slot_off_loop", return_value=False
+        ):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post(
+                    "/api/chat/slots/test/project-group",
+                    json={"project_group_id": "grp-new"},
+                )
+                assert resp.status == 409
+                assert (await resp.json())["code"] == "session_gone"
+                # Rolled back to the prior tag, not left on grp-new.
+                assert slot.project_group_id == "grp-prior"
+                assert slot._dirty is True
+
+    @pytest.mark.asyncio
+    async def test_rollback_is_guarded_not_unconditional(self, tmp_path):
+        """The rollback only fires while the field still holds THIS request's
+        value: if a concurrent writer set a THIRD value during the (refused)
+        save, the rollback must NOT clobber it. Kills a mutation that drops the
+        `if slot.project_group_id == project_group_id` guard."""
+        slot = _ChatSlot("test")
+        slot.project_group_id = "grp-prior"
+        state = _mock_state(tmp_path, slot)
+        state.projects.create_project("Target", project_id="grp-new")
+
+        async def _refuse_after_third_party_write(*_a, **_k):
+            # Simulate a concurrent writer landing a different value before the
+            # save returns its refusal.
+            slot.project_group_id = "grp-concurrent"
+            return False
+
+        with patch(
+            "kiro_crew.dashboard.chat_folders.save_slot_off_loop",
+            side_effect=_refuse_after_third_party_write,
+        ):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post(
+                    "/api/chat/slots/test/project-group",
+                    json={"project_group_id": "grp-new"},
+                )
+                assert resp.status == 409
+                # Guarded rollback: the concurrent value is preserved, NOT
+                # overwritten back to grp-prior.
+                assert slot.project_group_id == "grp-concurrent"
+
+    @pytest.mark.asyncio
+    async def test_create_then_save_refusal_leaves_no_orphan_record(self, tmp_path):
+        """CREATE path: if the save refuses (409), the project record must NOT
+        be stranded in the store — create_project is committed inside the lock
+        only after the re-check, and a refused save means no record was created
+        (Correctness-review HIGH: orphan project record). Here the slot is not
+        rebound, so the re-check passes and create runs; the save then refuses,
+        and the record must be gone (rolled back with the tag)."""
+        slot = _ChatSlot("test")
+        state = _mock_state(tmp_path, slot)
+        with patch(
+            "kiro_crew.dashboard.chat_folders.save_slot_off_loop", return_value=False
+        ):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post(
+                    "/api/chat/slots/test/project-group", json={"name": "Orphan"}
+                )
+                assert resp.status == 409
+                # No orphan: the create was committed under the same lock, and a
+                # refused save leaves the store without the stranded record.
+                assert state.projects.list_projects() == []
+                assert slot.project_group_id == ""
+
+    @pytest.mark.asyncio
+    async def test_rebind_before_lock_is_409_no_create_no_mutate(self, tmp_path):
+        """If the slot is swapped out from under the request before the in-lock
+        re-check, the handler returns 409, does NOT create a project, and does
+        NOT mutate the (new) slot. Covers the _slot_meta_txn_lock rebind path."""
+        slot = _ChatSlot("test")
+        state = _mock_state(tmp_path, slot)
+
+        # save_slot_off_loop must never be reached on this path.
+        save_mock = MagicMock()
+
+        async def _swap_slot(*_a, **_k):
+            # Rebind: a different object now lives under the same name, so the
+            # in-lock identity re-check (state._slots.get(name) is not slot) trips.
+            state._slots["test"] = _ChatSlot("test")
+            return {"name": "X"}, None  # (body, err) contract of read_bounded_json
+
+        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop", save_mock):
+            with patch(
+                "kiro_crew.dashboard.chat_folders.read_bounded_json",
+                side_effect=_swap_slot,
+            ):
+                async with TestClient(TestServer(_make_app(state))) as client:
+                    resp = await client.post(
+                        "/api/chat/slots/test/project-group", json={"name": "X"}
+                    )
+                    assert resp.status == 409
+                    assert (await resp.json())["code"] == "session_gone"
+                    save_mock.assert_not_called()
+                    assert state.projects.list_projects() == []  # no create
+
+    @pytest.mark.asyncio
     async def test_non_object_body_is_400(self, tmp_path):
         """A valid-but-non-object JSON body ([], 5, "s", true) must be 400
         body_not_object via the shared guard, never a 500 from .get() (#5587)."""
