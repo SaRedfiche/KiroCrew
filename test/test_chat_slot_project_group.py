@@ -38,7 +38,7 @@ class TestChatSlotProjectGroup:
         slot = _ChatSlot("test")
         assert slot.project_group_id == ""
         state = _mock_state(tmp_path, slot)
-        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop"):
+        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop", return_value=True):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
                     "/api/chat/slots/test/project-group", json={"name": "My Project"}
@@ -59,7 +59,7 @@ class TestChatSlotProjectGroup:
         slot = _ChatSlot("test")
         state = _mock_state(tmp_path, slot)
         rec = state.projects.create_project("Existing", project_id="grp-x")
-        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop"):
+        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop", return_value=True):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
                     "/api/chat/slots/test/project-group",
@@ -73,7 +73,7 @@ class TestChatSlotProjectGroup:
     async def test_attach_unknown_id_is_404(self, tmp_path):
         slot = _ChatSlot("test")
         state = _mock_state(tmp_path, slot)
-        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop"):
+        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop", return_value=True):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
                     "/api/chat/slots/test/project-group",
@@ -88,7 +88,7 @@ class TestChatSlotProjectGroup:
         slot = _ChatSlot("test")
         slot.project_group_id = "grp-old"
         state = _mock_state(tmp_path, slot)
-        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop"):
+        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop", return_value=True):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
                     "/api/chat/slots/test/project-group", json={}
@@ -101,7 +101,7 @@ class TestChatSlotProjectGroup:
     async def test_id_and_name_both_is_ambiguous_400(self, tmp_path):
         slot = _ChatSlot("test")
         state = _mock_state(tmp_path, slot)
-        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop"):
+        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop", return_value=True):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
                     "/api/chat/slots/test/project-group",
@@ -117,7 +117,7 @@ class TestChatSlotProjectGroup:
     async def test_non_string_id_rejected(self, tmp_path):
         slot = _ChatSlot("test")
         state = _mock_state(tmp_path, slot)
-        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop"):
+        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop", return_value=True):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
                     "/api/chat/slots/test/project-group",
@@ -134,7 +134,7 @@ class TestChatSlotProjectGroup:
         slot = _ChatSlot("test")
         slot.project_group_id = "grp-keep"  # already tagged
         state = _mock_state(tmp_path, slot)
-        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop"):
+        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop", return_value=True):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
                     "/api/chat/slots/test/project-group", json={"name": "   "}
@@ -259,7 +259,7 @@ class TestChatSlotProjectGroup:
         slot = _ChatSlot("test")
         slot.project_group_id = "grp-keep"
         state = _mock_state(tmp_path, slot)
-        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop"):
+        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop", return_value=True):
             async with TestClient(TestServer(_make_app(state))) as client:
                 r1 = await client.post(
                     "/api/chat/slots/test/project-group", json={"name": None}
@@ -282,7 +282,7 @@ class TestChatSlotProjectGroup:
         slot = _ChatSlot("test")
         slot.project_group_id = "grp-old"
         state = _mock_state(tmp_path, slot)
-        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop"):
+        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop", return_value=True):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
                     "/api/chat/slots/test/project-group",
@@ -297,7 +297,7 @@ class TestChatSlotProjectGroup:
         body_not_object via the shared guard, never a 500 from .get() (#5587)."""
         slot = _ChatSlot("test")
         state = _mock_state(tmp_path, slot)
-        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop"):
+        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop", return_value=True):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
                     "/api/chat/slots/test/project-group", json=[1, 2, 3]
@@ -309,7 +309,7 @@ class TestChatSlotProjectGroup:
     @pytest.mark.asyncio
     async def test_slot_not_found(self, tmp_path):
         state = _mock_state(tmp_path)  # no slot
-        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop"):
+        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop", return_value=True):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
                     "/api/chat/slots/nonexistent/project-group",
@@ -321,7 +321,7 @@ class TestChatSlotProjectGroup:
     async def test_invalid_json(self, tmp_path):
         slot = _ChatSlot("test")
         state = _mock_state(tmp_path, slot)
-        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop"):
+        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop", return_value=True):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
                     "/api/chat/slots/test/project-group",
