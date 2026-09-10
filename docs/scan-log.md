@@ -5,6 +5,47 @@ these entries record the GO/NO-GO decisions and accepted risks against each head
 
 ---
 
+## Phase-1 Signal 1 — same-file collision detection — `1698578cf` (branch `feature/project-coordination-collision-samefile`)
+
+Same-file merge-risk signal: ≥2 distinct LIVE sessions tagged into one project
+editing the same repo-relative file within 30 min. New
+`src/kiro_crew/dashboard/collision_index.py` (in-memory index) +
+`collision_derive.py` (off-loop git derivation), wired into the turn hot path
+(`chat_runner.py`), `DashboardState.collisions` (`state.py`), turn-start reset
+(`chat_handlers.py`). Diff base is the tagging-API tip `222ce4a86`.
+
+| Gate | Verdict | Notes |
+|---|---|---|
+| Build + tests | GO | 35 collision tests + 776 dashboard neighbors green |
+| ASH (`f982f266`, dashboard dir, 10 scanners) | GO for diff | 0 actionable on changed files; only bandit `note`-level subprocess advisories (B404/B603/B607 on intentional git calls, B112 on the deliberate error-swallow) |
+| Adversarial crew (5 axes, on `43b816f91`) | GO after fixes | No Blocker. Security-Medium (per-path git-spawn storm) → memoize repo-lookup once per cwd + per-flush path cap. AI-Medium → drop write-only `worktree_root`. Tests-High → cap/sensitive-skip/git-failure/fork tests. All applied + re-verified. |
+| Multimodel panel (`1698578cf`) | GO | GPT PASS, Opus PASS, First-Principles + Design CONCERNS (unwired read-surface / ships one commit ahead of the Signal-2 consumer — the deliberate two-commit split) |
+
+**Paired record:** `1698578cf | crew: GO (all 5 axes; Security/AI/Tests findings applied on the commits after 43b816f91, re-verified) | panel: GO (GPT/Opus PASS, First-Principles/Design CONCERNS = scoping/taste)`
+(Crew ran on `43b816f91`; every finding was fixed in the commits since. Panel GO
+is on the final `1698578cf`, which the crew fixes are folded into.)
+
+**Panel loop (eval corpus — panel-caught data-loss/leak class):** the panel
+BLOCKed three successive SHAs, each a distinct real defect in my own hot-path
+code, none a false positive: `aa21f4163` — a newest-N-rows cap could evict a
+distinct session's row (false-negative collision) → fixed at root by storing
+ONE row per session per key (bounded by distinct-session-count, cap removed);
+same SHA — a `state.py` comment claimed a wired panel/notify consumer that does
+not exist → corrected; `79c4d2541` — `record_edit` pruned only the touched key,
+leaking stale keys for the process lifetime → fixed by calling `index.prune()`
+(all-key sweep) every turn-exit, off-loop. `1698578cf` cleared it.
+
+**Accepted follow-ups (do not block; land with Signal 2 / the panel consumer):**
+1. The index read surface (`contested_files`, `prune` caller for reads,
+   `distinct_session_count`) ships one commit ahead of its panel/notify consumer
+   — a deliberate two-commit split (Signal 1 = detect+index; Signal 2 + delivery
+   = next commit). First-Principles/Design flag this as scoping; the consumer
+   lands next.
+2. `is_fork_pair` symmetry is a documented contract; the real predicate (built
+   from `forked_from`) lands with the panel/notify consumer that supplies it.
+
+---
+
 ## Phase-1 Step 4 — project-group tagging API — `0c1a3d3d6` (branch `feature/project-coordination-tagging-api`)
 
 New `POST /api/chat/slots/{slot}/project-group` (`api_chat_slot_project_group` in
