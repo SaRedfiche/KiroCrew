@@ -1708,26 +1708,34 @@ async def api_chat_slot_project_group(request: web.Request) -> web.Response:
         return err
 
     # ── validate + resolve the target project id (no store WRITE yet) ─────────
-    raw_id = body.get("project_group_id")
-    raw_name = body.get("name")
-    if raw_id is not None and not isinstance(raw_id, str):
+    # Distinguish key ABSENT from key PRESENT-WITH-ANY-VALUE (incl. JSON null):
+    # untag is signalled by OMITTING both keys (or an explicit empty-string id),
+    # so a PRESENT key must carry a string. A present null/number/etc. is a 400,
+    # NOT a silent untag — otherwise {"name": null} or {"project_group_id": null}
+    # on a tagged slot would erase the tag (GPT-review data-loss BLOCK).
+    _MISSING = object()
+    raw_id = body.get("project_group_id", _MISSING)
+    raw_name = body.get("name", _MISSING)
+    id_present = raw_id is not _MISSING
+    name_present = raw_name is not _MISSING
+    if id_present and not isinstance(raw_id, str):
         return web.json_response(
             {"error": "project_group_id must be a string", "code": "bad_project_group_id"},
             status=400,
         )
-    if raw_name is not None and not isinstance(raw_name, str):
+    if name_present and not isinstance(raw_name, str):
         return web.json_response(
             {"error": "name must be a string", "code": "bad_name"}, status=400
         )
-    project_group_id = (raw_id or "").strip()
-    project_name = (raw_name or "").strip()
-    if project_group_id and raw_name is not None:
+    project_group_id = (raw_id if id_present else "").strip()
+    project_name = (raw_name if name_present else "").strip()
+    if project_group_id and name_present:
         # Ambiguous: attach-existing and create-new are mutually exclusive.
         return web.json_response(
             {"error": "supply project_group_id OR name, not both", "code": "ambiguous_target"},
             status=400,
         )
-    if raw_name is not None and not project_name:
+    if name_present and not project_name:
         # A present but blank/whitespace name is a malformed CREATE, NOT an
         # untag: untag is signalled by OMITTING name (and an empty id), so a
         # caller who sent "name" clearly meant to create. Treating a blank name

@@ -252,6 +252,46 @@ class TestChatSlotProjectGroup:
                     assert state.projects.list_projects() == []  # no create
 
     @pytest.mark.asyncio
+    async def test_null_name_is_400_not_untag(self, tmp_path):
+        """{"name": null} (key present, JSON null) is NOT the omit-to-untag
+        signal — it must be 400 bad_name, never a silent tag erase (GPT-review
+        data-loss). Same for a present null project_group_id."""
+        slot = _ChatSlot("test")
+        slot.project_group_id = "grp-keep"
+        state = _mock_state(tmp_path, slot)
+        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop"):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                r1 = await client.post(
+                    "/api/chat/slots/test/project-group", json={"name": None}
+                )
+                assert r1.status == 400
+                assert (await r1.json())["code"] == "bad_name"
+                r2 = await client.post(
+                    "/api/chat/slots/test/project-group",
+                    json={"project_group_id": None},
+                )
+                assert r2.status == 400
+                assert (await r2.json())["code"] == "bad_project_group_id"
+                # Neither erased the existing tag.
+                assert slot.project_group_id == "grp-keep"
+
+    @pytest.mark.asyncio
+    async def test_explicit_empty_id_untags(self, tmp_path):
+        """An explicit {"project_group_id": ""} is a valid untag (key present,
+        string, empty) — distinct from a present null."""
+        slot = _ChatSlot("test")
+        slot.project_group_id = "grp-old"
+        state = _mock_state(tmp_path, slot)
+        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop"):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post(
+                    "/api/chat/slots/test/project-group",
+                    json={"project_group_id": ""},
+                )
+                assert resp.status == 200
+                assert slot.project_group_id == ""
+
+    @pytest.mark.asyncio
     async def test_non_object_body_is_400(self, tmp_path):
         """A valid-but-non-object JSON body ([], 5, "s", true) must be 400
         body_not_object via the shared guard, never a 500 from .get() (#5587)."""
