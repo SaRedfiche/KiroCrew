@@ -5,6 +5,48 @@ these entries record the GO/NO-GO decisions and accepted risks against each head
 
 ---
 
+## Phase-1 Step 4 — project-group tagging API — `0c1a3d3d6` (branch `feature/project-coordination-tagging-api`)
+
+New `POST /api/chat/slots/{slot}/project-group` (`api_chat_slot_project_group` in
+`src/kiro_crew/dashboard/chat_folders.py`) — the validated create-or-attach-or-untag
+interface and first caller of `ProjectStore`, wired as a shared `DashboardState.projects`
+instance. Diff base is the store branch tip `b04ccbad4` (store + field plumb gated GO
+separately below).
+
+| Gate | Verdict | Notes |
+|---|---|---|
+| Build + tests | GO | 16 endpoint tests green (`./.venv/bin/pytest test/test_chat_slot_project_group.py`); neighbors + body-guard ratchet green |
+| ASH (`888404a5`, dashboard dir, 10 scanners) | GO for diff | 279 dir-wide findings, **0 on any changed file** (`chat_folders.py`/`state.py`/`routes/sessions.py`); the 4 criticals are pre-existing `token_*.py` |
+| Adversarial crew (5 axes, on `fb7eca370`) | GO after fix | Correctness HIGH (create-then-fail orphan record) — FIXED (`7d89a3c67`: create inside the lock + compensating delete) and re-verified with tests. Security/Docs/AI/Tests GO. |
+| Multimodel panel (`479804636`) | GO | GPT PASS, Opus PASS, First-Principles PASS, Design CONCERNS (watch, non-blocking) |
+
+**Paired record:** `0c1a3d3d6 | crew: GO (all 5 axes; Correctness HIGH orphan-record fixed on 7d89a3c67, re-verified) | panel: GO on 479804636 (GPT/Opus/First-Principles PASS, Design CONCERNS=watch)`
+(Crew ran on `fb7eca370`; its one HIGH was fixed in the commits since. Panel GO is on
+`479804636`; `0c1a3d3d6` adds only a tests-only mock-hardening delta — handler bytes
+identical — so the panel GO stands without a re-gate, per the ship-it tests-only exemption.)
+
+**Panel loop (kept for the eval corpus — panel-caught data-loss class):** the panel
+BLOCKed three successive SHAs, each a distinct instance of one class — a
+"present-but-not-a-real-target silently untags an existing project" data-loss path:
+`fb7eca370`→ N/A (crew round); `7d89a3c67` GPT BLOCK (blank/whitespace `name` → silent
+untag) + Design BLOCK (duplicate shadowed test); `52dbc9458` GPT BLOCK (present JSON
+`null` name/id → silent untag). Root fix: untag is the key-ABSENT signal ONLY; a present
+key must carry a non-empty string, else 400. `479804636` cleared it.
+
+**Accepted follow-ups (do not block; land with later Phase-1/2 work):**
+1. Per-caller rate-limit on the create branch (crew Security Nit) — cap-bounded at
+   `_MAX_PROJECTS`=500 → 503 today; add `allow_create(...)` for parity with folder-create.
+2. Dangling-tag reconciliation (Design watch): the attach `get_project` pre-check is
+   advisory not transactional; a project deleted between check and commit leaves a dangling
+   tag. Tolerated by the store's delete-always/dangling-id-is-a-reader-concern contract, but
+   there is no GC/scrub. Add a lazy-clear or periodic reconcile, and assert the reader
+   tolerance as a store class-invariant, when the reader/notify path lands.
+3. 48-bit id mint × idempotent-by-id create (crew Correctness Nit): a `uuid4().hex[:12]`
+   collision would silently attach to a pre-existing different project; negligible at the
+   500 cap, retry-on-collision if ever tightened.
+
+---
+
 ## SHA `c255a4a1a` (field plumb + round-trip tests) — GATE: GO
 
 **Change:** Phase-1 `project_group_id` slot field plumb (`85b2ebb26`) + round-trip
