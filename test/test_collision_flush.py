@@ -9,6 +9,8 @@ import pytest
 
 from kiro_crew.dashboard.chat_runner import _flush_collision_writes
 from kiro_crew.dashboard.collision_index import CollisionIndex, FileKey
+from kiro_crew.dashboard.collision_notify import NotifyOnce
+from kiro_crew.dashboard.worktree_index import WorktreeIndex
 
 
 def _git(cwd, *args):
@@ -32,17 +34,172 @@ def _repo(tmp_path, remote="git@github.com:org/repo.git"):
     return tmp_path
 
 
-def _slot(project, project_group_id, writes):
-    # A minimal stand-in with just the attributes the flush reads.
+def _slot(project, project_group_id, writes, *, key="chat-1"):
+    # A minimal stand-in with the attributes the flush + effective_session_key read.
     return types.SimpleNamespace(
         project=str(project),
         project_group_id=project_group_id,
         _collision_writes=list(writes),
+        key=key,
+        linked_session_key="",
+        forked_from=None,
+        title="",
+        agent="",
     )
 
 
-def _state():
-    return types.SimpleNamespace(collisions=CollisionIndex())
+class _CapturingBus:
+    def __init__(self):
+        self.pushed = []
+
+    def push(self, payload):
+        self.pushed.append(payload)
+        return {}
+
+
+def _state(*slots):
+    st = types.SimpleNamespace(
+        collisions=CollisionIndex(),
+        worktrees=WorktreeIndex(),
+        collision_notify_once=NotifyOnce(),
+        notification_bus=_CapturingBus(),
+    )
+    st._slots = {s.key: s for s in slots}
+    return st
+
+
+
+class TestSignal2Notify:
+    @pytest.mark.asyncio
+    async def test_same_worktree_collision_notifies(self, tmp_path):
+        """Two live sessions tagged into one project sharing a worktree ->
+        the flush fires a same-worktree notification (default-notify)."""
+        repo = _repo(tmp_path / "r")
+        f = repo / "a.py"
+        f.write_text("x", encoding="utf-8")
+        slot_a = _slot(repo, "grp-1", [str(f)], key="chat-a")
+        slot_b = _slot(repo, "grp-1", [], key="chat-b")
+        state = _state(slot_a, slot_b)
+        # Pre-place B on the same worktree (as if B's flush ran first), under
+        # B's EFFECTIVE session key (what the flush + live set use).
+        import os as _os
+
+        from kiro_crew.dashboard.chat_utils import effective_session_key
+
+        state.worktrees.set_worktree(
+            effective_session_key(slot_b), _os.path.realpath(str(repo))
+        )
+        await _flush_collision_writes(state, slot_a, effective_session_key(slot_a))
+        # A same-worktree notification was pushed, with the opaque project id.
+        assert len(state.notification_bus.pushed) == 1
+        body = state.notification_bus.pushed[0].body
+        assert "grp-1" in body and "worktree" in body
+        # Dedupe: a second identical flush does NOT re-notify.
+        slot_a._collision_writes = [str(f)]
+        await _flush_collision_writes(state, slot_a, effective_session_key(slot_a))
+        assert len(state.notification_bus.pushed) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_write_turn_still_evaluates_same_worktree(self, tmp_path):
+        """A tagged session that shares a tree but wrote nothing this turn still
+        notifies (Signal 2 evaluates on an empty write set; GPT-review)."""
+        import os as _os
+
+        from kiro_crew.dashboard.chat_utils import effective_session_key
+
+        repo = _repo(tmp_path / "r")
+        a = _slot(repo, "grp-1", [], key="chat-a")  # NO writes this turn
+        b = _slot(repo, "grp-1", [], key="chat-b")
+        state = _state(a, b)
+        state.worktrees.set_worktree(effective_session_key(b), _os.path.realpath(str(repo)))
+        await _flush_collision_writes(state, a, effective_session_key(a))
+        assert len(state.notification_bus.pushed) == 1
+        assert "worktree" in state.notification_bus.pushed[0].body
+
+    @pytest.mark.asyncio
+    async def test_solo_session_does_not_notify(self, tmp_path):
+        from kiro_crew.dashboard.chat_utils import effective_session_key
+
+        repo = _repo(tmp_path / "r")
+        f = repo / "a.py"
+        f.write_text("x", encoding="utf-8")
+        slot_a = _slot(repo, "grp-1", [str(f)], key="chat-a")
+        state = _state(slot_a)  # only one live session
+        await _flush_collision_writes(state, slot_a, effective_session_key(slot_a))
+        assert state.notification_bus.pushed == []
+
+    @pytest.mark.asyncio
+    async def test_fork_pair_on_shared_tree_does_not_notify(self, tmp_path):
+        import os as _os
+
+        from kiro_crew.dashboard.chat_utils import effective_session_key
+
+        repo = _repo(tmp_path / "r")
+        f = repo / "a.py"
+        f.write_text("x", encoding="utf-8")
+        parent = _slot(repo, "grp-1", [str(f)], key="chat-parent")
+        child = _slot(repo, "grp-1", [], key="chat-child")
+        # forked_from stores the parent's EFFECTIVE session key (see chat_fork.py).
+        child.forked_from = effective_session_key(parent)
+        state = _state(parent, child)
+        state.worktrees.set_worktree(
+            effective_session_key(child), _os.path.realpath(str(repo))
+        )
+        await _flush_collision_writes(state, parent, effective_session_key(parent))
+        # A fork pair momentarily sharing the parent's tree is not the hazard.
+        assert state.notification_bus.pushed == []
+
+    @pytest.mark.asyncio
+    async def test_stranger_breaks_fork_pair_and_notifies(self, tmp_path):
+        """Parent + its fork + an UNRELATED stranger on one tree IS a real race
+        (the fork exclusion must not swallow it). Drives _is_fork_pair from the
+        live-slot forked_from map end-to-end."""
+        import os as _os
+
+        from kiro_crew.dashboard.chat_utils import effective_session_key
+
+        repo = _repo(tmp_path / "r")
+        f = repo / "a.py"
+        f.write_text("x", encoding="utf-8")
+        parent = _slot(repo, "grp-1", [str(f)], key="chat-parent")
+        child = _slot(repo, "grp-1", [], key="chat-child")
+        stranger = _slot(repo, "grp-1", [], key="chat-stranger")
+        child.forked_from = effective_session_key(parent)
+        state = _state(parent, child, stranger)
+        wt = _os.path.realpath(str(repo))
+        state.worktrees.set_worktree(effective_session_key(child), wt)
+        state.worktrees.set_worktree(effective_session_key(stranger), wt)
+        await _flush_collision_writes(state, parent, effective_session_key(parent))
+        assert len(state.notification_bus.pushed) == 1
+        assert "worktree" in state.notification_bus.pushed[0].body
+
+    @pytest.mark.asyncio
+    async def test_same_tree_that_is_also_same_file_emits_one_note(self, tmp_path):
+        """Two sessions sharing a worktree AND contesting the same file this
+        turn -> exactly ONE note (same-worktree), not two (per-tree dedupe)."""
+        import os as _os
+
+        from kiro_crew.dashboard.chat_utils import effective_session_key
+
+        repo = _repo(tmp_path / "r")
+        f = repo / "a.py"
+        f.write_text("x", encoding="utf-8")
+        slot_a = _slot(repo, "grp-1", [str(f)], key="chat-a")
+        slot_b = _slot(repo, "grp-1", [], key="chat-b")
+        state = _state(slot_a, slot_b)
+        wt = _os.path.realpath(str(repo))
+        # B already on the same tree AND already recorded editing the same file.
+        state.worktrees.set_worktree(effective_session_key(slot_b), wt)
+        state.collisions.record_edit(
+            project_group_id="grp-1",
+            repo_id="github.com/org/repo",
+            repo_rel_path="a.py",
+            session=effective_session_key(slot_b),
+        )
+        await _flush_collision_writes(state, slot_a, effective_session_key(slot_a))
+        # Exactly one note, and it is the same-worktree (higher-severity) one.
+        assert len(state.notification_bus.pushed) == 1
+        assert "worktree" in state.notification_bus.pushed[0].body
 
 
 class TestFlush:

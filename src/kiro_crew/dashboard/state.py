@@ -87,6 +87,8 @@ from kiro_crew.release_channel import channel as _release_channel_of_build
 from kiro_crew.safety_override import cached_disabled_approval_modes, safety_override
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
 from kiro_crew.dashboard.collision_index import CollisionIndex
+from kiro_crew.dashboard.collision_notify import NotifyOnce
+from kiro_crew.dashboard.worktree_index import WorktreeIndex
 from kiro_crew.sel import sel
 
 if TYPE_CHECKING:
@@ -4978,10 +4980,14 @@ class DashboardState:
         # Same-file collision index (Signal 1). In-memory, process-local runtime
         # state — NOT a durable store: collision data is recency-windowed and
         # only meaningful against currently-live sessions, so nothing survives a
-        # restart. Fed off-loop from the per-turn file-write flush. The live
-        # READ path (project panel / notify) is NOT wired yet — it lands with
-        # Signal 2 in the next commit; today only record_edit has a caller.
+        # restart. Fed off-loop from the per-turn file-write flush, evaluated
+        # and notified there (Signal 2 commit), and read by the project panel.
         self.collisions = CollisionIndex()
+        # Same-worktree collision index (Signal 2): live session -> worktree_root
+        # co-tenancy, and the per-process notify-once dedupe for both signals.
+        # In-memory/process-local like self.collisions.
+        self.worktrees = WorktreeIndex()
+        self.collision_notify_once = NotifyOnce()
         self.start_time = start_time
         # Published only at the final boot-to-ready boundary in server.py.
         # The socket binds earlier, so /api/ready can truthfully return 503

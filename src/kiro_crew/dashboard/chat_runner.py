@@ -78,6 +78,10 @@ from kiro_crew.dashboard.chat_delivery import (
 )
 from kiro_crew.dashboard.chat_persistence import _build_history_prefix, save_slot_off_loop
 from kiro_crew.dashboard.collision_derive import derive_repo_context, repo_rel_for
+from kiro_crew.dashboard.collision_notify import (
+    samefile_should_notify,
+    sameworktree_should_notify,
+)
 from kiro_crew.dashboard.chat_summary import generate_session_summary
 from kiro_crew.dashboard.chat_title import (
     _extract_and_redact_plan_metadata,
@@ -1716,52 +1720,164 @@ async def _flush_collision_writes(state: Any, slot: "_ChatSlot", session: str) -
     index = getattr(state, "collisions", None)
     if index is None:
         return
+    worktrees = getattr(state, "worktrees", None)
+    notify_once = getattr(state, "collision_notify_once", None)
     project_group_id = getattr(slot, "project_group_id", "") or ""
     cwd = getattr(slot, "project", "") or ""
     record = bool(project_group_id and cwd and paths)  # this turn has edits to record
 
-    def _derive_and_record() -> None:
-        # ALWAYS sweep window-expired rows across ALL keys first: record_edit
-        # prunes only the key it writes, so a session that moved on to other
-        # files (or an untagged/no-cwd turn) would otherwise leave old keys
-        # resident for the process lifetime (GPT-review unbounded-memory BLOCK).
-        # O(keys), off-loop, every turn — the natural cadence.
+    # Snapshot the live-session set + fork lineage ON THE LOOP (state._slots is
+    # mutated on the loop; reading it in a worker thread would race). live_keys
+    # is each live slot's effective_session_key; forked_from maps a session to
+    # its parent's effective key so the collision math can exclude a fork pair.
+    live_keys: set[str] = set()
+    forked_from: dict[str, str] = {}
+    for _s in list(getattr(state, "_slots", {}).values()):
+        k = effective_session_key(_s)
+        live_keys.add(k)
+        parent = getattr(_s, "forked_from", None)
+        if parent:
+            forked_from[k] = parent
+
+    def _is_fork_pair(a: str, b: str) -> bool:
+        # Symmetric: either is the other's fork parent (design/Signal-1 contract).
+        return forked_from.get(a) == b or forked_from.get(b) == a
+
+    def _derive_record_and_evaluate() -> list[dict]:
+        # ALWAYS sweep expired/dead state first, even on a no-record turn, so a
+        # long-lived process cannot accumulate stale keys/sessions (GPT-review
+        # unbounded-memory class). O(keys)/O(sessions), off-loop.
         index.prune()
-        if not record:
-            return
-        ctx = derive_repo_context(cwd)
-        if ctx is None:
-            return
-        # Cap distinct paths derived per flush: a collision only needs a file to
-        # appear once, so an unbounded write burst cannot fan out unbounded work.
+        if worktrees is not None:
+            worktrees.prune(live_sessions=live_keys)
+        # Signal 2: keep THIS session's worktree_root current on EVERY flush,
+        # from its cwd, INDEPENDENT of whether it recorded file writes this turn
+        # — a session that changed into (or opened in) a shared tree without a
+        # write must still be visible as a co-tenant (GPT-review: set_worktree
+        # only ran after writes). Derive once from cwd; a non-repo cwd clears the
+        # entry. This ctx is also reused for Signal-1 recording below.
+        ctx = derive_repo_context(cwd) if cwd else None
+        if worktrees is not None:
+            worktrees.set_worktree(session, ctx.repo_root if ctx is not None else "")
+        if notify_once is not None:
+            # Bounded-lifecycle sweep of the dedupe store (GPT-review OOM class):
+            # drop signatures whose sessions are all closed.
+            notify_once.prune(live_keys)
+        # Signal 2 must evaluate even on a NO-WRITE turn: two tagged sessions can
+        # share a tree without either writing this turn, and that race must still
+        # notify (GPT-review). So the guard is "untagged / no repo / no notifier",
+        # NOT "no writes". Same-file RECORDING below is what needs writes.
+        if ctx is None or not project_group_id or notify_once is None:
+            return []
+        # Signal 1: record each written path's edit (only when this turn wrote).
         seen: set[str] = set()
-        for p in paths:
-            if p in seen:
-                continue
-            seen.add(p)
-            if len(seen) > _MAX_COLLISION_PATHS_PER_FLUSH:
-                break
-            # Skip sensitive-path writes explicitly (design §4.2): a rejected
-            # path yields None from validate_file_path.
-            try:
-                if validate_file_path(p) is None:
+        contended_rel: set[str] = set()
+        if record:
+            for p in paths:
+                if p in seen:
                     continue
-            except Exception:
-                continue
-            rel = repo_rel_for(ctx.repo_root, p)  # pure FS math, no git
-            if rel is None:
-                continue  # out-of-tree -> drop
-            index.record_edit(
+                seen.add(p)
+                if len(seen) > _MAX_COLLISION_PATHS_PER_FLUSH:
+                    break
+                try:
+                    if validate_file_path(p) is None:
+                        continue
+                except Exception:
+                    continue
+                rel = repo_rel_for(ctx.repo_root, p)  # pure FS math, no git
+                if rel is None:
+                    continue  # out-of-tree -> drop
+                index.record_edit(
+                    project_group_id=project_group_id,
+                    repo_id=ctx.repo_id,
+                    repo_rel_path=rel,
+                    session=session,
+                )
+                contended_rel.add(rel)
+        # ── evaluate + decide notifications (design §4.4) ────────────────────
+        notes: list[dict] = []
+        # Signal 2 first (default-notify, higher severity). ``members`` is the
+        # cotenant set of THIS session's tree; a same-file collision whose
+        # sessions are all within that set is the SAME race and is deduped to
+        # the one same-worktree note below (per-tree, NOT per-turn — a same-file
+        # collision with a session on a DIFFERENT worktree of the repo is a
+        # distinct hazard and must still notify; Correctness-review HIGH).
+        members = worktrees.cotenants(
+            ctx.repo_root, live_sessions=live_keys, is_fork_pair=_is_fork_pair
+        ) if worktrees is not None else frozenset()
+        if len(members) >= 2:
+            sig = sameworktree_should_notify(
                 project_group_id=project_group_id,
-                repo_id=ctx.repo_id,
-                repo_rel_path=rel,
-                session=session,
+                worktree_root=ctx.repo_root,
+                sessions=members,
+                notify_once=notify_once,
             )
+            if sig:
+                notes.append({"signal": "same-worktree", "sessions": len(members)})
+        # Signal 1 (panel-first; notify only under suppression, for files THIS
+        # turn touched). Skip a key already covered by the same-worktree note
+        # (its sessions are a subset of that tree's cotenants).
+        for key, fsessions in index.contested_files(
+            project_group_id, live_sessions=live_keys, is_fork_pair=_is_fork_pair
+        ):
+            if key.repo_rel_path not in contended_rel:
+                continue  # only files THIS turn touched, not every project file
+            if members and set(fsessions) <= set(members):
+                continue  # same race as the same-worktree note -> deduped
+            sig = samefile_should_notify(
+                project_group_id=project_group_id,
+                repo_id=key.repo_id,
+                repo_rel_path=key.repo_rel_path,
+                sessions=fsessions,
+                notify_once=notify_once,
+            )
+            if sig:
+                notes.append({"signal": "same-file", "sessions": len(fsessions)})
+        return notes
 
     try:
-        await asyncio.to_thread(_derive_and_record)
+        pending = await asyncio.to_thread(_derive_record_and_evaluate)
     except Exception:
         logger.debug("collision flush failed for session %s", session, exc_info=True)
+        return
+    # Fire notifications back on the loop (design §4.4: opaque project id in the
+    # body, plain text, persists to the unscoped notifications.jsonl).
+    bus = getattr(state, "notification_bus", None)
+    if not pending or bus is None:
+        return
+    for note in pending:
+        try:
+            bus.push(
+                _collision_notification_payload(
+                    project_group_id=project_group_id,
+                    signal=note["signal"],
+                    session_count=note["sessions"],
+                )
+            )
+        except Exception:
+            logger.debug("collision notification push failed", exc_info=True)
+
+
+def _collision_notification_payload(*, project_group_id: str, signal: str, session_count: int):
+    """Build the collision NotificationPayload — opaque project id only, plain
+    body, links to the project panel. Kept tiny and import-local so chat_runner
+    does not hard-depend on the notifications package at module load."""
+    from kiro_crew.dashboard.collision_notify import notification_body
+    from kiro_crew.notifications.bus import NotificationPayload
+
+    return NotificationPayload(
+        source="system",
+        channel="system.agent",
+        title="Project coordination",
+        body=notification_body(
+            project_group_id=project_group_id,
+            signal=signal,
+            session_count=session_count,
+        ),
+        priority="default",
+        url="/projects",
+        group_key=f"collision:{project_group_id}",
+    )
 
 
 def _attach_turn_stats(

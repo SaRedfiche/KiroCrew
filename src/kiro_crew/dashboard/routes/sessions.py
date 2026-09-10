@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from aiohttp import web
 
-from kiro_crew.dashboard import chat, chat_voice, handlers, openai_compat
+from kiro_crew.dashboard import chat, chat_voice, handlers, openai_compat, project_panel
 
 
 def register(app: web.Application) -> None:
@@ -51,6 +51,8 @@ def register(app: web.Application) -> None:
     app.router.add_post(
         "/api/chat/slots/{slot}/project-group", chat.api_chat_slot_project_group
     )
+    # Project-coordination panel (read-only browse view).
+    app.router.add_get("/api/projects/{id}/panel", project_panel.api_project_panel)
     # Message pins
     app.router.add_get("/api/chat/pins", chat.api_chat_pins_list)
     app.router.add_post("/api/chat/pins", chat.api_chat_pins_create)
