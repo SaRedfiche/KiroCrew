@@ -3196,7 +3196,8 @@ export const api = {
   /** Tag a session into a project (create-or-attach-or-untag), mirroring the
    *  backend's one endpoint. Pass `{name}` to CREATE a project and attach;
    *  `{projectGroupId}` to attach to an existing one; neither to UNTAG. The
-   *  backend rejects supplying both. `slot` is passed as the session key so a
+   *  backend 400s a non-empty id sent together with a name (`ambiguous_target`);
+   *  this client only ever sends exactly one of the three shapes. `slot` is passed as the session key so a
    *  restricted (incognito) slot is recognised as such by the write gate. */
   setSlotProjectGroup: (
     slot: string,

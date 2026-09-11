@@ -168,7 +168,10 @@ async def api_projects_coordination_list(request: web.Request) -> web.Response:
 
     The tagging UI's "pick an existing project" source. Deliberately NOT
     ``/api/projects`` (taken by the task-runner's unrelated project concept) —
-    this is the ``ProjectStore`` record table (``{id, name, repos}``).
+    this is the ``ProjectStore`` record table. The response carries only
+    ``{id, name}`` per record: the pick-list renders the name and tags by id,
+    and a list-scoped ``repos`` rollup would be dead weight (the per-project
+    ``repos`` view lives on the panel route).
 
     App-ownership mirrors the panel (App Kit §5.2): the dashboard user (no app
     claim) sees every project; an APP caller sees ONLY the projects it owns a
@@ -202,5 +205,5 @@ async def api_projects_coordination_list(request: web.Request) -> web.Response:
         resources=f"count={len(records)}",
     )
     return web.json_response(
-        {"projects": [{"id": r.id, "name": r.name, "repos": list(r.repos)} for r in records]}
+        {"projects": [{"id": r.id, "name": r.name} for r in records]}
     )

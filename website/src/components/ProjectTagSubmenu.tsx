@@ -10,7 +10,6 @@ import {
 export interface CoordinationProject {
   readonly id: string
   readonly name: string
-  readonly repos?: readonly string[]
 }
 
 interface ProjectTagSubmenuProps {

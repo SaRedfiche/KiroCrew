@@ -130,12 +130,15 @@ export default function SessionActionsMenu({
   // dedupes against the sidebar's own ['chat-folders'] cache — no extra fetch.
   const { data: folders = [] } = useQuery<ChatFolder[]>({ queryKey: ['chat-folders'], queryFn: () => api.chatFolders() })
 
-  // Project-coordination records drive the Project submenu — same open-gated,
-  // deduped query pattern as folders above (mounts only while a menu is open).
+  // Project-coordination records drive the Project submenu. Like the folders
+  // query above, it is not `enabled`-gated — what limits the fetch is that this
+  // component only MOUNTS inside an open Radix menu (no forceMount), and
+  // staleTime dedupes repeated opens of the same menu.
   const currentProjectGroupId = slot?.project_group_id
   const { data: projectsResp } = useQuery<{ projects: CoordinationProject[] }>({
     queryKey: ['coordination-projects'],
     queryFn: () => api.listCoordinationProjects(),
+    staleTime: 30_000,
   })
   const coordinationProjects = projectsResp?.projects ?? []
   const queryClient = useQueryClient()
