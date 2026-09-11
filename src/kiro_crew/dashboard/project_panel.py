@@ -161,3 +161,46 @@ async def api_project_panel(request: web.Request) -> web.Response:
         caller=caller, operation="project_panel", outcome="allowed", resources=f"project={pid}"
     )
     return web.json_response(payload)
+
+
+async def api_projects_coordination_list(request: web.Request) -> web.Response:
+    """GET /api/projects/coordination — the project-coordination records.
+
+    The tagging UI's "pick an existing project" source. Deliberately NOT
+    ``/api/projects`` (taken by the task-runner's unrelated project concept) —
+    this is the ``ProjectStore`` record table (``{id, name, repos}``).
+
+    App-ownership mirrors the panel (App Kit §5.2): the dashboard user (no app
+    claim) sees every project; an APP caller sees ONLY the projects it owns a
+    LIVE session tagged into. So the list is never a name/title leak across the
+    app boundary, exactly like the panel's per-id gate — an app cannot learn a
+    project exists unless one of its own sessions is in it.
+
+    Read-only, cache-only (``list_projects`` serves the in-process cache with no
+    lock, matching the store's read model), so no off-loop hop is needed.
+    """
+    state: DashboardState = request.app["state"]
+    caller = request.get("user", "dashboard")
+    projects = getattr(state, "projects", None)
+    records = projects.list_projects() if projects is not None else []
+
+    request_app = _effective_request_app(state, request)
+    if request_app:
+        # An app sees a project only if it owns a live session tagged into it —
+        # same ownership predicate as the panel, applied per record.
+        owned = {
+            getattr(s, "project_group_id", "")
+            for s in state._slots.values()
+            if getattr(s, "_app", "") == request_app and getattr(s, "project_group_id", "")
+        }
+        records = [r for r in records if r.id in owned]
+
+    sel().log_api_access(
+        caller=caller,
+        operation="projects_coordination_list",
+        outcome="allowed",
+        resources=f"count={len(records)}",
+    )
+    return web.json_response(
+        {"projects": [{"id": r.id, "name": r.name, "repos": list(r.repos)} for r in records]}
+    )

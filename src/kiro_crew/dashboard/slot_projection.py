@@ -320,6 +320,7 @@ class SlotProjection:
             "slack_channel": slot._slack_channel,
             "slack_thread_ts": slot._slack_thread_ts,
             "folder_id": slot.folder_id,
+            "project_group_id": slot.project_group_id,
             "pinned": slot.pinned,
             "tags": list(slot.tags),
             "tags_revision": getattr(slot, "tags_revision", ""),
