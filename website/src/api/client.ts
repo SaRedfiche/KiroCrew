@@ -3189,7 +3189,7 @@ export const api = {
   updateChatFolder: (id: string, body: object) => patch('/api/chat/folders/' + encodeURIComponent(id), body).then(j),
   deleteChatFolder: (id: string) => del('/api/chat/folders/' + encodeURIComponent(id)).then(j),
   setSlotFolder: (slot: string, folderId: string | null) => patch('/api/chat/slots/' + encodeURIComponent(slot) + '/folder', { folder_id: folderId || '' }).then(j),
-  /** List the project-coordination records (id, name, repos) — the create-or-pick
+  /** List the project-coordination records ({id, name}) — the create-or-pick
    *  source for the session Project submenu. NOT `/api/projects` (that is the
    *  task-runner's unrelated project concept); this is the ProjectStore table. */
   listCoordinationProjects: () => fetch('/api/projects/coordination', { headers: { ..._sk } }).then(j),
