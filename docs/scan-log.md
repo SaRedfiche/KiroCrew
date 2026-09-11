@@ -243,3 +243,47 @@ machine-owned reframing, NOT by a 7th patch. The final digest-poison finding
 (the tagging API — the store's only intended caller), collision signals, notify,
 and panel are later commits and gate separately. The store is intentionally
 UNWIRED this commit (acknowledged Step-2/Step-4 split).
+
+---
+
+## feature/project-coordination-tagging-ui — interactive create-or-pick tagging UI
+
+**Head SHA:** `386dc470b` (panel + adversarial reviewed on `569db40f8`; `386dc470b`
+is a comment-only JSDoc delta from it — the non-behavioral skip clause applies).
+**Base:** `c0f9f7bc9` (Signal-2 tip — the UI depends on the full Phase-1 stack,
+so it branches off that tip, not origin/main).
+
+**What it ships:** GET `/api/projects/coordination` (`api_projects_coordination_list`)
+returning `{projects:[{id,name}]}` from `ProjectStore.list_projects()`, app-ownership
+gated by mirroring the sibling `api_project_panel` predicate; `project_group_id` added
+to `slot_projection.py`; frontend `ProjectTagSubmenu.tsx` (create/pick/untag) + the
+`listCoordinationProjects`/`setSlotProjectGroup` client pair + `project_group_id` on
+the `ChatSlot` type, wired into the shared `SessionActionsMenu`.
+
+**Build/tests:** frontend `tsc -b` clean; backend `test_project_coordination_list.py`
+(8 tests incl. app-ownership non-leak, empty-owned, untag-drop, static-vs-dynamic
+route resolution + registrar-order invariant), panel/store suites green.
+
+**ASH:** RUN via MCP (`fe1477d3`, dashboard dir, MEDIUM, 7 scanners incl.
+detect-secrets/checkov) — **0 findings**. Committed lock files present
+(`website/package-lock.json`; no new deps).
+
+**Holmes:** RUN (`5b51a99a`, default baseline, 8 changed files) — **0 findings**.
+
+**Adversarial pre-merge (crew, on `43726c8f5`):** Security GO, Correctness GO,
+Docs-honesty GO, AI-necessity GO; **Tests NO-GO** → all findings fixed on
+`569db40f8`: route-resolution test [High], empty-owned + untag-drop tests [Med],
+`repos` field subtracted from the list payload [Nit, two axes], two comment
+softenings [Nit].
+
+**Multi-model panel (on `569db40f8`, report `docs/scan-tagui-panel.md`):** GATE
+**GO** — GPT 5.6 PASS, Opus 4.8 PASS, First-Principles PASS; Design + UX CONCERNS.
+The Design/Opus JSDoc-drift CONCERN (`listCoordinationProjects` still said
+`repos`) fixed on `386dc470b`. UX CONCERN = the acknowledged `prompt()`
+placeholder (Phase-4-first, known tradeoff) — see follow-up.
+
+**Both high-bar lanes (GPT + Opus) PASS on the candidate SHA → GO.**
+
+**Accepted follow-up (do not block):** replace the `handleCreate` `prompt()` with
+a proper create modal (accessible, validated) — the Phase-4 UI polish the
+component comment flags; carry an owner/ticket before wider audience.
