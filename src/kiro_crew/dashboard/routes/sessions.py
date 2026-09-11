@@ -53,6 +53,13 @@ def register(app: web.Application) -> None:
     )
     # Project-coordination panel (read-only browse view).
     app.router.add_get("/api/projects/{id}/panel", project_panel.api_project_panel)
+    # Project-coordination record list (the tagging UI's create-or-pick source).
+    # A STATIC path segment: aiohttp resolves it ahead of the task-runner's
+    # dynamic ``/api/projects/{id}`` (routes/connections.py), so ``coordination``
+    # is never captured as a task-runner project id.
+    app.router.add_get(
+        "/api/projects/coordination", project_panel.api_projects_coordination_list
+    )
     # Message pins
     app.router.add_get("/api/chat/pins", chat.api_chat_pins_list)
     app.router.add_post("/api/chat/pins", chat.api_chat_pins_create)
