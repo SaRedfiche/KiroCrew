@@ -1,8 +1,9 @@
 import * as React from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Pencil, Circle, Pin, Zap, Locate, Link2, Tag as TagIcon, X, ExternalLink, Monitor, Undo2, RotateCw, PanelTop } from 'lucide-react'
 import type { ChatFolder } from '../types'
 import FolderMoveSubmenu from './FolderMoveSubmenu'
+import ProjectTagSubmenu, { type CoordinationProject } from './ProjectTagSubmenu'
 import SendToInstanceSubmenu from './SendToInstanceSubmenu'
 import SessionColorSwatches from './SessionColorSwatches'
 import LinkedSurfacesSection from './LinkedSurfacesSection'
@@ -129,6 +130,30 @@ export default function SessionActionsMenu({
   // dedupes against the sidebar's own ['chat-folders'] cache — no extra fetch.
   const { data: folders = [] } = useQuery<ChatFolder[]>({ queryKey: ['chat-folders'], queryFn: () => api.chatFolders() })
 
+  // Project-coordination records drive the Project submenu — same open-gated,
+  // deduped query pattern as folders above (mounts only while a menu is open).
+  const currentProjectGroupId = slot?.project_group_id
+  const { data: projectsResp } = useQuery<{ projects: CoordinationProject[] }>({
+    queryKey: ['coordination-projects'],
+    queryFn: () => api.listCoordinationProjects(),
+  })
+  const coordinationProjects = projectsResp?.projects ?? []
+  const queryClient = useQueryClient()
+  // After any tag write the session's project_group_id changes (server truth
+  // arrives via the slot stream) AND a create adds a record, so refresh both.
+  const afterTagWrite = () => {
+    void queryClient.invalidateQueries({ queryKey: ['coordination-projects'] })
+  }
+  const tagPickProject = (projectGroupId: string) => {
+    void api.setSlotProjectGroup(slotKey, { projectGroupId }).then(afterTagWrite)
+  }
+  const tagCreateProject = (name: string) => {
+    void api.setSlotProjectGroup(slotKey, { name }).then(afterTagWrite)
+  }
+  const untagProject = () => {
+    void api.setSlotProjectGroup(slotKey, null).then(afterTagWrite)
+  }
+
   const groups = collapseGroups<React.ReactNode>([
     // Informational (header only) — generic slots injected by the caller.
     infoSlots ?? [],
@@ -158,6 +183,15 @@ export default function SessionActionsMenu({
           label={i18nT('components.sessionActionsMenu.move_to_folder')}
         />
       ),
+      <ProjectTagSubmenu
+        key="project"
+        variant={variant}
+        projects={coordinationProjects}
+        currentProjectGroupId={currentProjectGroupId}
+        onPick={tagPickProject}
+        onCreate={tagCreateProject}
+        onUntag={untagProject}
+      />,
       <Item key="tags" onSelect={() => openTagPopover(slotKey)}>
         <TagIcon size={13} className="shrink-0 text-muted" /> {i18nT('components.sessionActionsMenu.tags')}
       </Item>,

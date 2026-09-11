@@ -3189,6 +3189,28 @@ export const api = {
   updateChatFolder: (id: string, body: object) => patch('/api/chat/folders/' + encodeURIComponent(id), body).then(j),
   deleteChatFolder: (id: string) => del('/api/chat/folders/' + encodeURIComponent(id)).then(j),
   setSlotFolder: (slot: string, folderId: string | null) => patch('/api/chat/slots/' + encodeURIComponent(slot) + '/folder', { folder_id: folderId || '' }).then(j),
+  /** List the project-coordination records (id, name, repos) — the create-or-pick
+   *  source for the session Project submenu. NOT `/api/projects` (that is the
+   *  task-runner's unrelated project concept); this is the ProjectStore table. */
+  listCoordinationProjects: () => fetch('/api/projects/coordination', { headers: { ..._sk } }).then(j),
+  /** Tag a session into a project (create-or-attach-or-untag), mirroring the
+   *  backend's one endpoint. Pass `{name}` to CREATE a project and attach;
+   *  `{projectGroupId}` to attach to an existing one; neither to UNTAG. The
+   *  backend rejects supplying both. `slot` is passed as the session key so a
+   *  restricted (incognito) slot is recognised as such by the write gate. */
+  setSlotProjectGroup: (
+    slot: string,
+    target: { name: string } | { projectGroupId: string } | null,
+  ) =>
+    post(
+      '/api/chat/slots/' + encodeURIComponent(slot) + '/project-group',
+      target == null
+        ? {}
+        : 'name' in target
+          ? { name: target.name }
+          : { project_group_id: target.projectGroupId },
+      slot,
+    ).then(j),
   setSlotColor: (slot: string, colorIndex: number | null) => patch('/api/chat/slots/' + encodeURIComponent(slot) + '/color', { color_index: colorIndex }).then(j),
   /** Set a custom per-session color (#rrggbb). The backend clears color_index
    *  when a hex is set and vice versa (mutual exclusion), so callers send one
