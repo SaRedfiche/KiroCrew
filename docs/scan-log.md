@@ -5,6 +5,55 @@ these entries record the GO/NO-GO decisions and accepted risks against each head
 
 ---
 
+## Phase-1 Signal 2 (same-worktree) + notify + panel — `acb89c387` (branch `feature/project-coordination-collision-worktree-notify`)
+
+Completes the two-signal collision model: the same-worktree strong-warn signal
+(`worktree_index.py`), the notify path with noise discipline (`collision_notify.py`),
+the per-turn evaluate-and-notify wiring (`chat_runner.py` flush), and the read-only
+`GET /api/projects/{id}/panel` (`project_panel.py`). Diff base is the Signal-1 tip `f08dfbc4d`.
+
+| Gate | Verdict | Notes |
+|---|---|---|
+| Build + tests | GO | 43 collision/panel tests + 776 dashboard neighbors green |
+| ASH (`03f12423`, 10 scanners) | GO for diff | 0 actionable on changed files (bandit note-level subprocess advisories only) |
+| Adversarial crew (5 axes, on `2ec25efe9`) | GO after fixes | Security Blocker (panel authz gate) + High (id oracle); Correctness High (per-tree dedupe); AI (dead `forget`/`drop_session` removed, `_all_fork_paired` deduped); Tests (stranger-breaks-fork + both-signals-one-note + panel same-worktree/cross-project). All applied + re-verified. |
+| Multimodel panel (`acb89c387`) | GO | GPT PASS, Opus PASS, Design PASS, First-Principles CONCERNS (per-flush-vs-eager scoping = accepted taste) |
+
+**Paired record:** `acb89c387 | crew: GO (all 5 axes; Security/Correctness/AI/Tests findings applied) | panel: GO (GPT/Opus/Design PASS, First-Principles CONCERNS=taste)`
+(Crew ran on `2ec25efe9`; findings fixed in the commits since. Panel GO is on the
+final `acb89c387`.)
+
+**Panel loop (eval corpus — seven GPT rounds, honestly split):** rounds 1–5 were
+REAL delivery-surface defects, each fixed at root: panel served any project's
+name/session-titles with no authz → app-ownership gate + uniform 404 (no id
+oracle); the per-turn dedupe bool wrongly suppressed a cross-worktree same-file
+collision → per-tree dedupe (`fsessions <= members`); `NotifyOnce` grew unbounded
+→ liveness prune (drop a signature once ANY participant dies); Signal 2 evaluated
+only on write turns → evaluate on every flush; the panel same-worktree flag leaked
+another project's session ids → own-project filter; a retagged session leaked into
+its old project's same-file flag → scope to currently-tagged sessions; same
+repo_rel_path in two repos deduped to one note → fold `repo_id` into the signature.
+Rounds 6–7 were DOC-HONESTY: docstrings claimed a "standing / eager re-derived on
+every slot.project commit" view and a "last activity" field the per-flush code does
+not provide; fixed by aligning all docstrings/comments to the per-flush,
+eventually-consistent reality (the whole class swept at once, which broke the loop).
+Opus PASSed every round; the code was correct by round 5.
+
+**Accepted follow-ups (do not block):**
+1. Eager `worktree_root` re-derive on every confirmed `slot.project` commit (the
+   8 mutation sites), replacing the per-flush approximation — closes the
+   "two just-opened sessions don't flag until each flushes" window. Documented
+   in the code as the Phase-1 approximation.
+2. Notify `bus.push` is same-failure-domain (Design CONCERNS): wrapped in
+   try/except with the panel's collision flags as the independent advisory
+   backstop, so a lost push is not silent data loss — but no durable-write
+   fallback. Revisit if the notify path becomes load-bearing.
+3. Same-file churn suppression: a 2-session collision that grows to 3 notified at
+   the 2-set then goes panel-only (intended; the panel still shows it).
+
+---
+---
+
 ## Phase-1 Signal 1 — same-file collision detection — `1698578cf` (branch `feature/project-coordination-collision-samefile`)
 
 Same-file merge-risk signal: ≥2 distinct LIVE sessions tagged into one project
