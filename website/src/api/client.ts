@@ -4600,7 +4600,7 @@ export const api = {
   backfillChannelFolder: (namespace: string) =>
     post('/api/channel-folders/backfill', { namespace }).then(j) as Promise<ChannelFolderBackfillReport>,
   setSlotFolder: (slot: string, folderId: string | null) => patch('/api/chat/slots/' + encodeURIComponent(slot) + '/folder', { folder_id: folderId || '' }).then(j),
-  /** List the project-coordination records (id, name, repos) — the create-or-pick
+  /** List the project-coordination records ({id, name}) — the create-or-pick
    *  source for the session Project submenu. NOT `/api/projects` (that is the
    *  task-runner's unrelated project concept); this is the ProjectStore table. */
   listCoordinationProjects: () => fetch('/api/projects/coordination', { headers: { ..._sk } }).then(j),
