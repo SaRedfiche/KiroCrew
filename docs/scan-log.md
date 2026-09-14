@@ -384,3 +384,57 @@ skipped, out of scope for a backend change). No CONCERNS.
 
 **Both high-bar lanes (GPT + Opus) PASS on the candidate SHA → GO.** The adversarial
 Blocker was a real silent-dead-feature bug caught pre-merge and fixed.
+
+
+---
+
+## P2.3 — create_session tags a worker into a project group at birth
+
+**Head SHA:** `cdb6deb7e`. **Base:** `ff46a59c5` (the P2.2 tip — P2.3 builds on the
+stack; distinct feature, gated on its own delta).
+
+**What it ships (design §12.3, the coordinator actuator's one gateway primitive):**
+`session_control.create_session` gains a `project_group_id` param that tags a new
+worker session into an EXISTING project group at birth, so a coordinator's
+dispatched worker is a member the P2.2 panel rollup surfaces. Attach-only,
+validated against `ProjectStore` (unknown id → 404 `project_group_not_found`,
+mirroring the tagging API's attach-by-id path; never create-by-name). Plumbed
+through the HTTP handler and the `session_create` MCP tool (+ bounded FieldSpec).
+The plan/dispatch/evaluate loop stays a skill (decision Q3).
+
+**Latent fix folded in:** the empty-window merge in `chat_persistence.py` now
+writes `project_group_id` — a `SLOT_OWNED_META` key it omitted since Phase 1, so a
+tagged idle session lost its tag on restart via that path. Caught by the
+`SLOT_OWNED` drift-guard test.
+
+**Build/tests:** 195 coordination-suite tests green (incl. 3 new create_session
+cases + the drift-guard); compile clean.
+
+**ASH:** RUN via MCP (`edb4eb8f`, dashboard dir, MEDIUM, 10 scanners) — **0
+findings attributable to the diff**. Dir-wide totals (4 crit detect-secrets, 13
+med / 266 low bandit) are ALL pre-existing: the only two findings referencing a
+changed file are bandit "Try/Except/Continue" advisories in `session_control.py`
+on lines the diff did not add; the detect-secrets criticals are in
+`token_auth.py`/`token_secret.py` (unchanged). Verified against the diff.
+
+**Holmes:** RUN (`2619dd41`, default baseline, 5 files) — **2 findings, both
+pre-existing and NOT attributable to the diff**: a `dangerous-subprocess-use`
+[high] + B603 [low] on `validation.py:533`, an existing `subprocess.run` with a
+`# noqa: S603 — fixed argv` suppression and rationale; the diff's `validation.py`
+hunk adds only a FieldSpec (no subprocess). 0 for the change.
+
+**Adversarial pre-merge crew: NOT RUN.** Two full 4-axis waves (8 axis-spawns)
+died with `kiro_crew.acp.client.AcpProcessDied: Runtime process died during
+prompt` — a runtime/spawn-path crash, NOT a review verdict, with ample host
+resources (12.9 GB free, load 0.62, cap 8). Per the fix-all-loop rule to disclose
+when only one gate ran, this is recorded rather than counted as passed.
+
+**Multi-model panel (on `cdb6deb7e`, report `docs/scan-p23-panel.md`):** GATE
+**GO** — GPT 5.6 PASS, Opus 4.8 PASS, First-Principles PASS, Design PASS (UX
+skipped, backend-only). No CONCERNS.
+
+**Verdict: GO on the panel (four models, both high-bar lanes PASS), adversarial
+crew blocked by infra.** The change is small and precedented (mirrors `folder_id`
+end-to-end); the vendor-diverse panel is the gate that carried it. Re-run the
+adversarial crew when the spawn runtime is stable if a second gate is wanted
+before merge.
