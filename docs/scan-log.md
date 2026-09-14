@@ -287,3 +287,48 @@ placeholder (Phase-4-first, known tradeoff) — see follow-up.
 **Accepted follow-up (do not block):** replace the `handleCreate` `prompt()` with
 a proper create modal (accessible, validated) — the Phase-4 UI polish the
 component comment flags; carry an owner/ticket before wider audience.
+
+---
+
+## tagging UI — post-eval fixes (list-refresh regression + dedup-by-name)
+
+**Head SHA:** `3bf045070`. **Base:** `386dc470b` (the gated tagging-UI head).
+Found by hands-on local use of the dev instance before these landed.
+
+**What it ships:**
+1. Frontend `SessionActionsMenu.tsx` — removed `staleTime` from the
+   `coordination-projects` query. A non-zero staleTime served the stale
+   pre-create (empty) list after a create (menu closes → `invalidateQueries`
+   has no mounted observer), the "only ever shows New project" bug. Default 0
+   refetches on every menu open.
+2. Backend `chat_folders.py` create-by-name path — dedup by attaching to an
+   existing same-name project (inside the txn lock) instead of minting a
+   duplicate. Two sessions naming the same project land in one group.
+
+**Build/tests:** frontend `tsc` clean; tag suite 18 tests (incl. dedup-attaches
+and attach-409-preserves-shared), list/panel/store suites green.
+
+**ASH:** RUN via MCP (`6bede233`, dashboard dir, MEDIUM, 8 scanners incl.
+bandit/detect-secrets/checkov) — **0 findings**.
+
+**Holmes:** RUN (`07563370`, default baseline, 2 changed files) — **0 findings**.
+
+**Adversarial re-review (crew, 3-axis on the delta):** Docs/AI-necessity GO;
+Correctness + Security converged on ONE **Blocker** — the save-failure rollback
+`if project_name: delete_project(project_group_id)` deleted a PRE-EXISTING shared
+project on the attach-by-name path (orphaning other sessions' tags). Fixed on
+`6489d6bf3`: rollback now deletes only a request-local `created_record_id`
+(minted-this-request), never an attached-to id; regression test added.
+
+**Multi-model panel:** ran twice.
+- On `6489d6bf3` (report `docs/scan-tagui-fixes-panel.md`): **NO-GO** — GPT 5.6
+  BLOCKed attach-by-name as a cross-tenant oracle. Opus + First-Principles PASS.
+- Adjudicated a **model-scoped false positive**: coordination is single-user
+  (Decisions-of-record row 10) — no project "the user cannot see", attach-by-id
+  already applies no per-project gate, so attach-by-name is the feature. Threat
+  model documented at the dedup site + design §9. Re-run on `3bf045070` with the
+  model stated (report `docs/scan-tagui-final-panel.md`): **GO** — GPT PASS,
+  Opus PASS, First-Principles PASS; Design + UX CONCERNS (the accepted `prompt()`
+  follow-up + JSDoc).
+
+**Both high-bar lanes (GPT + Opus) PASS on the candidate SHA → GO.**
