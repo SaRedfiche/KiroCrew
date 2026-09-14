@@ -248,6 +248,32 @@ class TestChatSlotProjectGroup:
                 assert slot.project_group_id == ""
 
     @pytest.mark.asyncio
+    async def test_attach_by_name_save_refusal_preserves_shared_project(self, tmp_path):
+        """ATTACH-BY-NAME path: if the save refuses (409), the PRE-EXISTING
+        project the request attached to must SURVIVE — only a minted record may
+        be rolled back. Deleting the attached-to record would orphan every other
+        session tagged into it (adversarial re-review Blocker: the old guard
+        deleted on the attach path too)."""
+        slot = _ChatSlot("test")
+        state = _mock_state(tmp_path, slot)
+        # A shared project already exists (created by some other session).
+        state.projects.create_project("Shared", project_id="grp-shared")
+        with patch(
+            "kiro_crew.dashboard.chat_folders.save_slot_off_loop", return_value=False
+        ):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post(
+                    "/api/chat/slots/test/project-group", json={"name": "Shared"}
+                )
+                assert resp.status == 409
+                # The pre-existing project is UNTOUCHED — not deleted by the
+                # save-failure compensation (it attached, it did not mint).
+                survivors = [p.id for p in state.projects.list_projects()]
+                assert survivors == ["grp-shared"]
+                # The caller's own tag rolled back.
+                assert slot.project_group_id == ""
+
+    @pytest.mark.asyncio
     async def test_rebind_before_lock_is_409_no_create_no_mutate(self, tmp_path):
         """If the slot is swapped out from under the request before the in-lock
         re-check, the handler returns 409, does NOT create a project, and does
