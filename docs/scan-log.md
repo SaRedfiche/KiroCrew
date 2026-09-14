@@ -424,17 +424,34 @@ pre-existing and NOT attributable to the diff**: a `dangerous-subprocess-use`
 hunk adds only a FieldSpec (no subprocess). 0 for the change.
 
 **Adversarial pre-merge crew: NOT RUN.** Two full 4-axis waves (8 axis-spawns)
-died with `kiro_crew.acp.client.AcpProcessDied: Runtime process died during
-prompt` — a runtime/spawn-path crash, NOT a review verdict, with ample host
-resources (12.9 GB free, load 0.62, cap 8). Per the fix-all-loop rule to disclose
-when only one gate ran, this is recorded rather than counted as passed.
+**Adversarial pre-merge crew (4-axis):** two initial waves crashed on runtime
+`AcpProcessDied` (spawn-path infra, ample resources) and produced no verdicts; a
+third wave (after the runtime recovered) COMPLETED 4/4. Result: **GO**, no
+Blocker/High. Findings, all fixed on `b9f2d3e25`:
+- Security GO; Correctness GO; AI-necessity GO (attach-only verified safe, the
+  dangling-tag tolerance confirmed real against `project_panel`, both HTTP+MCP
+  paths necessary).
+- **[Medium, Docs-honesty]** the original commit narrative claimed the merge
+  "omitted project_group_id since Phase 1 → tagged session lost its tag on
+  restart." The crew EMPIRICALLY DISPROVED this: the parent already wrote it
+  conditionally in `_fresh_fields` + the full save, so a tagged session's tag
+  survived. The real (narrower) defect: a non-excluded SLOT_OWNED key written
+  conditionally failed the drift-guard (which saves an UNTAGGED newborn). Fix:
+  promote to a clearable write (correct); narrative corrected in the fix commit.
+- **[Medium, Correctness]** the promotion left the pre-existing conditional
+  write of the same key in `_fresh_fields` as dead code. Removed.
+- **[Medium, Tests]** the MCP `session_create` project_group_id plumb (the
+  coordinator entry point) was untested. Added `TestSessionCreateProjectGroup`
+  (forwards-into-body, omitted-when-absent, schema-bounds-overlength).
+- **[Nit]** `projects is None` branch untested — production-unreachable
+  (`__init__` always sets a store) and fails safe; left.
 
 **Multi-model panel (on `cdb6deb7e`, report `docs/scan-p23-panel.md`):** GATE
 **GO** — GPT 5.6 PASS, Opus 4.8 PASS, First-Principles PASS, Design PASS (UX
 skipped, backend-only). No CONCERNS.
 
-**Verdict: GO on the panel (four models, both high-bar lanes PASS), adversarial
-crew blocked by infra.** The change is small and precedented (mirrors `folder_id`
-end-to-end); the vendor-diverse panel is the gate that carried it. Re-run the
-adversarial crew when the spawn runtime is stable if a second gate is wanted
-before merge.
+**Paired verdict @ crew-reviewed `cdb6deb7e` → fixes on `b9f2d3e25`:** crew GO
+(3 Medium fixed) | panel GO (GPT/Opus/FP/Design PASS). The `b9f2d3e25` delta over
+the reviewed SHA is a dead-line removal + comment + 3 tests (non-behavioral —
+gate re-run not required; 365 coordination-suite tests incl. the drift-guard
+green). Both review gates GO. Final head: `b9f2d3e25`.
