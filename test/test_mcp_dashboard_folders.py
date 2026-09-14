@@ -1793,6 +1793,47 @@ class TestSessionCreateFolder:
         assert folder_call.kwargs["session_key"] == "dashboard:gate-key"
 
 
+class TestSessionCreateProjectGroup:
+    """`session_create.project_group_id` — the P2.3 plumb that lets an
+    agent-driven coordinator tag its dispatched worker into a project group at
+    birth. Covers the MCP tool/schema layer the create_session core tests do not
+    reach: the arg forwards into the create-route body, and the schema bounds it.
+    """
+
+    CREATED = {"target": "chat-9-900", "title": "worker"}
+
+    def test_project_group_id_forwards_into_the_create_body(self) -> None:
+        """The tool passes project_group_id through to the create route body."""
+        with (
+            patch("kiro_crew.mcp_dashboard._get", side_effect=_rows),
+            patch("kiro_crew.mcp_dashboard._post", return_value=dict(self.CREATED)) as post,
+        ):
+            _call_tool_inner(
+                "session_create", {"title": "worker", "project_group_id": "grp-1"}
+            )
+        path, body = post.call_args.args
+        assert path == "/api/session-control/create"
+        assert body["project_group_id"] == "grp-1"
+
+    def test_omitted_project_group_id_is_not_sent(self) -> None:
+        """No project_group_id key in the body when the arg is absent (opt-in)."""
+        with (
+            patch("kiro_crew.mcp_dashboard._get", side_effect=_rows),
+            patch("kiro_crew.mcp_dashboard._post", return_value=dict(self.CREATED)) as post,
+        ):
+            _call_tool_inner("session_create", {"title": "worker"})
+        assert "project_group_id" not in post.call_args.args[1]
+
+    def test_schema_bounds_the_project_group_id(self) -> None:
+        """The FieldSpec rejects an over-length id (defense-in-depth bound)."""
+        from kiro_crew.validation import SESSION_CREATE_SCHEMA, validate_tool_args
+
+        with pytest.raises(ValidationError):
+            validate_tool_args(
+                {"project_group_id": "x" * 5000}, SESSION_CREATE_SCHEMA
+            )
+
+
 class TestAdvertisedSet:
     """Reaching this server means an agent spec referenced it.
 

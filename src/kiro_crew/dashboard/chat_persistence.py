@@ -2820,6 +2820,10 @@ def _save_slot_to_history(
                 #   writer that has not learned them).
                 fields: dict = {
                     "folder_id": slot.folder_id or "",
+                    # Clearable, like folder_id: the merge cannot delete a key, so
+                    # an untagged/untagged-on-restart slot must write "" here (a
+                    # conditional write would leave a stale tag un-clearable via
+                    # this path). Rehydrate treats falsy as untagged.
                     "project_group_id": slot.project_group_id or "",
                     "tags": list(slot.tags),
                     "pinned": bool(slot.pinned),
@@ -2857,8 +2861,6 @@ def _save_slot_to_history(
                     fields["workspace"] = slot.workspace
                 if slot.project:
                     fields["project"] = slot.project
-                if slot.project_group_id:
-                    fields["project_group_id"] = slot.project_group_id
                 if slot._app:
                     fields["app"] = slot._app
                 if slot._origin:
