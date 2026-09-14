@@ -2342,6 +2342,23 @@ async def api_chat_slot_project_group(request: web.Request) -> web.Response:
             # tagging UI's "New project" affordance means to a user (the store
             # itself still permits same-name distinct ids for other callers;
             # this is a policy of THIS validated create interface, not the
+            #
+            # THREAT MODEL (decided fisherrn 2026-09-14): the name lookup is
+            # deliberately NOT scoped to an app-ownership predicate. KiroCrew's
+            # project coordination is a SINGLE-USER system — the human names the
+            # projects and decides which sessions join them; the user is the
+            # source of truth. "A project the caller cannot see" only exists in
+            # the App Kit sense (one installed APP's projects hidden from another
+            # APP); the human dashboard user has no app claim and is trusted with
+            # every project. Attach-by-id already applies NO per-project gate
+            # (any slot-owner attaches to any existing id — see the id branch
+            # above), so attach-by-name adds no authorization escalation within
+            # this model; it is the feature, not a leak. A multi-model reviewer
+            # (GPT) BLOCKed this as a cross-tenant oracle — a correct finding in a
+            # MULTI-TENANT frame that does not hold here, adjudicated as a
+            # model-scoped false positive. REVISIT ONLY IF apps ever mint project
+            # groups: then scope this lookup to the caller's visible set (the same
+            # predicate api_projects_coordination_list uses).
             # store). First match wins; names are compared trimmed as stored.
             # Best-effort IN-PROCESS: list_projects() is cache-only, so a record
             # created by ANOTHER process since load is not seen and a cross-
