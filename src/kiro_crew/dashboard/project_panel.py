@@ -30,6 +30,7 @@ from kiro_crew.dashboard.chat_folders import _effective_request_app
 from kiro_crew.dashboard.chat_utils import effective_session_key
 from kiro_crew.dashboard.handlers.files import _project_git_branch
 from kiro_crew.dashboard.state import DashboardState
+from kiro_crew import work_ledger
 from kiro_crew.sel import sel
 
 
@@ -104,6 +105,11 @@ async def api_project_panel(request: web.Request) -> web.Response:
     snap = [
         {
             "session": effective_session_key(s),
+            # Raw slot key (NOT the effective/prefixed id) — the work-ledger is
+            # keyed by the gateway session key the conductor tools write under
+            # (require_strict_session_key), so the rollup must look it up by this,
+            # not by effective_session_key. Popped before the row is returned.
+            "raw_key": s.key,
             "title": getattr(s, "title", "") or "",
             "agent": getattr(s, "agent", "") or "",
             "project_dir": getattr(s, "project", "") or "",
@@ -150,10 +156,57 @@ async def api_project_panel(request: web.Request) -> web.Response:
                 collisions.append(
                     {"signal": "same-worktree", "sessions": sorted(in_project)}
                 )
+        # Work-ledger progress rollup (Phase-2 P2.2, design §12). DERIVED, not
+        # stored (decisions Q1/Q2): for each session tagged into this project,
+        # a readable conductor ledger means it IS a coordinator (Q1 flag), and
+        # its work items ARE this project's plan/progress (Q2 group->items join).
+        # No stored coupling to the ProjectStore — computed in this one off-loop
+        # scan. list_work_items()/read_conductor() are lock-free and skip torn
+        # files, so a bad ledger reads as "no items", never a crash.
+        #
+        # KEYS: the ledger is keyed by the RAW slot key (raw_key), which is what
+        # the conductor tools write under; the panel's session ids are the
+        # effective (prefixed) form. worker_session_key on an item is likewise a
+        # raw key, so the in-project non-leak check compares against the set of
+        # RAW keys of this project's members — never the effective set.
+        project_raw_keys = {r["raw_key"] for r in snap}
+        raw_to_effective = {r["raw_key"]: r["session"] for r in snap}
+        work: list[dict] = []
+        for row in snap:
+            raw = row["raw_key"]
+            conductor = work_ledger.read_conductor(raw)
+            if conductor is None:
+                continue
+            row["is_coordinator"] = True  # derived display flag, not stored
+            for it in work_ledger.list_work_items(raw):
+                wk = it.worker_session_key
+                work.append(
+                    {
+                        "coordinator": row["session"],
+                        "item_id": it.item_id,
+                        "title": it.title,
+                        "state": it.state,
+                        "status": it.status,
+                        "summary": it.summary,
+                        "pr": it.pr,
+                        "round": it.round,
+                        # worker id (as the panel's effective form) only when it
+                        # is a session of THIS project — never leak a worker
+                        # tagged into another project (same rule as collisions).
+                        "worker": (
+                            raw_to_effective.get(wk)
+                            if wk in project_raw_keys
+                            else None
+                        ),
+                    }
+                )
+        for row in snap:
+            row.pop("raw_key", None)
         return {
             "project": {"id": record.id, "name": record.name, "repos": list(record.repos)},
             "sessions": snap,
             "collisions": collisions,
+            "work": work,
         }
 
     payload = await asyncio.to_thread(_enrich_and_flag)
