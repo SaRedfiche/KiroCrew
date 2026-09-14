@@ -2327,25 +2327,42 @@ async def api_chat_slot_project_group(request: web.Request) -> web.Response:
                 {"error": "session was deleted or rebound", "code": "session_gone"}, status=409
             )
         if project_name:
-            # CREATE now that the attach is guaranteed to be applied to a live,
-            # still-authorized slot: the record and the slot tag commit together,
-            # so a failed persist below rolls back the tag AND leaves no orphan
-            # record (create_project's flock is a leaf acquisition — no cycle
-            # with the slot-meta txn lock). Server mints the id (store requires
-            # a caller-minted one).
-            try:
-                record = state.projects.create_project(
-                    project_name, project_id=uuid.uuid4().hex[:12]
-                )
-            except ValueError as exc:
-                return web.json_response(
-                    {"error": str(exc), "code": "invalid_project"}, status=400
-                )
-            except ProjectStoreBusy:
-                return web.json_response(
-                    {"error": "project store busy, retry", "code": "store_busy"}, status=503
-                )
-            project_group_id = record.id
+            # CREATE-OR-ATTACH-BY-NAME. Inside the txn lock, first look for an
+            # existing project with this exact (case-sensitive, already-trimmed)
+            # name: if one exists, ATTACH to it rather than minting a second
+            # record. This makes the create path dedup by name — two sessions
+            # naming the same project land in ONE group, which is what the
+            # tagging UI's "New project" affordance means to a user (the store
+            # itself still permits same-name distinct ids for other callers;
+            # this is a policy of THIS validated create interface, not the
+            # store). First match wins; names are compared trimmed as stored.
+            existing = next(
+                (p for p in state.projects.list_projects() if p.name == project_name),
+                None,
+            )
+            if existing is not None:
+                project_group_id = existing.id
+            else:
+                # CREATE now that the attach is guaranteed to be applied to a
+                # live, still-authorized slot: the record and the slot tag commit
+                # together, so a failed persist below rolls back the tag AND
+                # leaves no orphan record (create_project's flock is a leaf
+                # acquisition — no cycle with the slot-meta txn lock). Server
+                # mints the id (store requires a caller-minted one).
+                try:
+                    record = state.projects.create_project(
+                        project_name, project_id=uuid.uuid4().hex[:12]
+                    )
+                except ValueError as exc:
+                    return web.json_response(
+                        {"error": str(exc), "code": "invalid_project"}, status=400
+                    )
+                except ProjectStoreBusy:
+                    return web.json_response(
+                        {"error": "project store busy, retry", "code": "store_busy"},
+                        status=503,
+                    )
+                project_group_id = record.id
         previous = slot.project_group_id
         slot.project_group_id = project_group_id  # "" on the untag path
         # NO await between the re-check/create and the mutation above.

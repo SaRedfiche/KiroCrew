@@ -55,6 +55,33 @@ class TestChatSlotProjectGroup:
                 state.push_slots_update.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_create_same_name_attaches_to_existing(self, tmp_path):
+        # Two sessions both "create" a project with the SAME name: the second
+        # attaches to the first's record instead of minting a duplicate. This
+        # validated create interface dedups by name (the store still permits
+        # same-name distinct ids for other callers).
+        slot_a = _ChatSlot("a")
+        slot_b = _ChatSlot("b")
+        state = _mock_state(tmp_path, slot_a)
+        state._slots["b"] = slot_b
+        with patch("kiro_crew.dashboard.chat_folders.save_slot_off_loop", return_value=True):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                r1 = await client.post(
+                    "/api/chat/slots/a/project-group", json={"name": "Shared"}
+                )
+                pid1 = (await r1.json())["project_group_id"]
+                r2 = await client.post(
+                    "/api/chat/slots/b/project-group", json={"name": "Shared"}
+                )
+                pid2 = (await r2.json())["project_group_id"]
+        # Same group id, and only ONE record in the store.
+        assert pid1 == pid2
+        assert slot_a.project_group_id == pid1
+        assert slot_b.project_group_id == pid1
+        records = [p for p in state.projects.list_projects() if p.name == "Shared"]
+        assert len(records) == 1
+
+    @pytest.mark.asyncio
     async def test_attach_existing_id(self, tmp_path):
         slot = _ChatSlot("test")
         state = _mock_state(tmp_path, slot)

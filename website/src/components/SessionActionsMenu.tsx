@@ -133,14 +133,17 @@ export default function SessionActionsMenu({
   const { data: folders = [] } = useQuery<ChatFolder[]>({ queryKey: ['chat-folders'], queryFn: () => api.chatFolders() })
 
   // Project-coordination records drive the Project submenu. Like the folders
-  // query above, it is not `enabled`-gated — what limits the fetch is that this
-  // component only MOUNTS inside an open Radix menu (no forceMount), and
-  // staleTime dedupes repeated opens of the same menu.
+  // query above, it is NOT `enabled`-gated and carries NO staleTime — what
+  // limits the fetch is that this component only MOUNTS inside an open Radix
+  // menu (no forceMount). A staleTime here is a bug: after a create/attach the
+  // menu closes, so the invalidateQueries refetch has no mounted observer, and
+  // on the next open a non-zero staleTime would serve the stale (pre-create)
+  // list — the "only ever shows New project" regression. Default staleTime 0
+  // makes every reopen refetch, matching the folders query.
   const currentProjectGroupId = slot?.project_group_id
   const { data: projectsResp } = useQuery<{ projects: CoordinationProject[] }>({
     queryKey: ['coordination-projects'],
     queryFn: () => api.listCoordinationProjects(),
-    staleTime: 30_000,
   })
   const coordinationProjects = projectsResp?.projects ?? []
   const queryClient = useQueryClient()
