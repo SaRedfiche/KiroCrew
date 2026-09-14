@@ -1777,6 +1777,13 @@ async def api_chat_slot_project_group(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": "session was deleted or rebound", "code": "session_gone"}, status=409
             )
+        # Whether THIS request minted a NEW project record (vs attached to an
+        # existing one, or untagged). ONLY a minted record may be deleted by the
+        # save-failure compensation below — deleting an attached-to, pre-existing
+        # record would orphan every OTHER session tagged into it (adversarial
+        # re-review Blocker: the old `if project_name` guard deleted on the
+        # attach-by-name path too).
+        created_record_id = ""
         if project_name:
             # CREATE-OR-ATTACH-BY-NAME. Inside the txn lock, first look for an
             # existing project with this exact (case-sensitive, already-trimmed)
@@ -1787,6 +1794,10 @@ async def api_chat_slot_project_group(request: web.Request) -> web.Response:
             # itself still permits same-name distinct ids for other callers;
             # this is a policy of THIS validated create interface, not the
             # store). First match wins; names are compared trimmed as stored.
+            # Best-effort IN-PROCESS: list_projects() is cache-only, so a record
+            # created by ANOTHER process since load is not seen and a cross-
+            # process duplicate can still be minted (tolerated — create is
+            # idempotent-by-id and the store permits same-name distinct ids).
             existing = next(
                 (p for p in state.projects.list_projects() if p.name == project_name),
                 None,
@@ -1814,6 +1825,7 @@ async def api_chat_slot_project_group(request: web.Request) -> web.Response:
                         status=503,
                     )
                 project_group_id = record.id
+                created_record_id = record.id  # only THIS id may be rolled back
         previous = slot.project_group_id
         slot.project_group_id = project_group_id  # "" on the untag path
         # NO await between the re-check/create and the mutation above.
@@ -1827,13 +1839,16 @@ async def api_chat_slot_project_group(request: web.Request) -> web.Response:
             if slot.project_group_id == project_group_id:
                 slot.project_group_id = previous
             slot._dirty = True
-            # Compensate the CREATE: if THIS request minted the record, the tag
+            # Compensate the CREATE: if THIS request MINTED the record, the tag
             # it was created for did not persist, so delete it rather than leave
-            # an orphan project nothing references (Correctness-review HIGH). We
+            # an orphan project nothing references. Guarded on the minted id, NOT
+            # on `project_name`: on the attach-by-name path project_group_id is a
+            # PRE-EXISTING shared record, and deleting it would orphan every
+            # other session tagged into it (adversarial re-review Blocker). We
             # are still under the slot-meta lock and just minted the id, so no
             # concurrent session attached to it in this window.
-            if project_name:
-                state.projects.delete_project(project_group_id)
+            if created_record_id:
+                state.projects.delete_project(created_record_id)
             source, caller = _audit_origin(request)
             sel().log_api_access(
                 caller=caller,
