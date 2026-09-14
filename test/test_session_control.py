@@ -3520,6 +3520,65 @@ def test_create_refuses_an_unknown_folder(tmp_path):
     assert state.live_slot_count() == before, "a refused create must not leave a slot behind"
 
 
+def test_create_tags_worker_into_project_group_at_birth(tmp_path):
+    """P2.3: create_session tags the new worker into an existing project group,
+    so a coordinator's dispatched worker is a group member the panel surfaces.
+    The tag must ride the birth metadata (the save path writes nothing for an
+    empty session, so this line is the only durable record)."""
+    from kiro_crew.dashboard.project_store import ProjectStore
+
+    state = _make_state(tmp_path)
+    state.projects = ProjectStore(base_dir=tmp_path)
+    state.projects.create_project("Big Goal", project_id="grp-1")
+    caller = _slot(state, "chat-1")
+
+    created = asyncio.run(
+        sc.create_session(
+            state, caller_session_key=_key(caller), project_group_id="grp-1"
+        )
+    )
+    child = state.get_slot(created["target"])
+    assert child is not None
+    assert child.project_group_id == "grp-1", "the worker must be tagged, not left untagged"
+    written = state.conversation_log.get_metadata(slot_history_key(child))
+    assert written.get("project_group_id") == "grp-1", (
+        "the tag must reach the persist-at-birth metadata — the save path writes "
+        "nothing for an empty session, so this line is the only record"
+    )
+
+
+def test_create_refuses_an_unknown_project_group(tmp_path):
+    """Attach-only: an unknown project group id refuses the WHOLE create (the
+    store never mints an id on lookup, so attaching to an unknown id would
+    strand a dangling tag). Mirrors the unknown-folder posture."""
+    from kiro_crew.dashboard.project_store import ProjectStore
+
+    state = _make_state(tmp_path)
+    state.projects = ProjectStore(base_dir=tmp_path)  # empty store
+    caller = _slot(state, "chat-1")
+    before = state.live_slot_count()
+
+    with pytest.raises(sc.SessionControlError) as exc:
+        asyncio.run(
+            sc.create_session(
+                state, caller_session_key=_key(caller), project_group_id="grp-missing"
+            )
+        )
+    assert exc.value.code == "project_group_not_found"
+    assert state.live_slot_count() == before, "a refused create must not leave a slot behind"
+
+
+def test_create_without_project_group_is_untagged(tmp_path):
+    """The tag is opt-in: an ordinary create (no project_group_id) leaves the
+    worker untagged and does not touch the project store."""
+    state = _make_state(tmp_path)
+    caller = _slot(state, "chat-1")
+    created = asyncio.run(sc.create_session(state, caller_session_key=_key(caller)))
+    child = state.get_slot(created["target"])
+    assert child is not None
+    assert (getattr(child, "project_group_id", "") or "") == ""
+
+
 def test_a_folder_deleted_mid_create_is_refused_under_the_lock(tmp_path, monkeypatch):
     """Folder existence is decided under the folder-store lock, late.
 

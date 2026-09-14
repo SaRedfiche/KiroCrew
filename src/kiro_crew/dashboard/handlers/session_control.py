@@ -255,6 +255,7 @@ async def api_session_control_create(request: web.Request) -> web.Response:
             # from the mutable config record. Here it decides whether the child
             # may be bound to a member's private store.
             caller_fenced=_carried_fence(request),
+            project_group_id=str(body.get("project_group_id") or ""),
         )
     except sc.SessionControlError as exc:
         return _refusal(exc)
