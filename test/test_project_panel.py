@@ -204,3 +204,112 @@ class TestProjectPanel:
             data = await resp.json()
             assert [c for c in data["collisions"] if c["signal"] == "same-worktree"] == []
 
+
+
+class TestProjectPanelWorkRollup:
+    """Phase-2 P2.2: the panel DERIVES a work-ledger progress rollup from group
+    members' conductor ledgers (no stored coupling). These tests stub the two
+    panel-facing ledger reads (``read_conductor`` / ``list_work_items``) so they
+    exercise the panel's derivation + non-leak scoping directly; the ledger's own
+    persistence is covered by the work-ledger suite."""
+
+    @staticmethod
+    def _patch_ledger(monkeypatch, *, conductors, items_by_key):
+        """conductors: set of slot keys that ARE conductors.
+        items_by_key: {slot_key: [WorkItem, ...]}."""
+        from kiro_crew.dashboard import project_panel
+        from kiro_crew.work_ledger import ConductorRecord
+
+        def _read_conductor(sk, **_):
+            return ConductorRecord(slot_key=sk) if sk in conductors else None
+
+        def _list_work_items(sk):
+            return list(items_by_key.get(sk, []))
+
+        monkeypatch.setattr(project_panel.work_ledger, "read_conductor", _read_conductor)
+        monkeypatch.setattr(project_panel.work_ledger, "list_work_items", _list_work_items)
+
+    @pytest.mark.asyncio
+    async def test_conductor_member_surfaces_items_and_flag(self, tmp_path, monkeypatch):
+        from kiro_crew.work_ledger import WorkItem
+
+        state = _state(tmp_path)
+        state.projects.create_project("P", project_id="grp-1")
+        coord = _slot("chat-coord", "grp-1", title="Coordinator")
+        worker = _slot("chat-worker", "grp-1", title="Worker")
+        state._slots = {"chat-coord": coord, "chat-worker": worker}
+
+        item = WorkItem(
+            item_id="it_abc12345",
+            title="Do subtask A",
+            state="open",
+            status="progress",
+            summary="halfway",
+            pr=42,
+            round=1,
+            worker_session_key="chat-worker",
+        )
+        self._patch_ledger(
+            monkeypatch, conductors={"chat-coord"}, items_by_key={"chat-coord": [item]}
+        )
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.get("/api/projects/grp-1/panel")
+            data = await resp.json()
+
+        by_key = {r["session"]: r for r in data["sessions"]}
+        assert by_key["dashboard:chat-coord"].get("is_coordinator") is True
+        assert "is_coordinator" not in by_key["dashboard:chat-worker"]
+
+        assert len(data["work"]) == 1
+        w = data["work"][0]
+        assert w["coordinator"] == "dashboard:chat-coord"
+        assert w["item_id"] == "it_abc12345"
+        assert w["title"] == "Do subtask A"
+        assert w["status"] == "progress"
+        assert w["summary"] == "halfway"
+        assert w["pr"] == 42
+        assert w["worker"] == "dashboard:chat-worker"  # effective form of the raw key
+
+    @pytest.mark.asyncio
+    async def test_no_ledger_means_empty_work_and_no_flag(self, tmp_path, monkeypatch):
+        state = _state(tmp_path)
+        state.projects.create_project("P", project_id="grp-1")
+        plain = _slot("chat-plain", "grp-1")
+        state._slots = {"chat-plain": plain}
+        # No conductors, no items.
+        self._patch_ledger(monkeypatch, conductors=set(), items_by_key={})
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.get("/api/projects/grp-1/panel")
+            data = await resp.json()
+        assert data["work"] == []
+        assert "is_coordinator" not in data["sessions"][0]
+
+    @pytest.mark.asyncio
+    async def test_worker_in_another_project_is_not_leaked(self, tmp_path, monkeypatch):
+        # An item bound to a worker NOT tagged into this project must surface the
+        # item (its coordinator is in-project) but NULL the worker id — same
+        # non-leak rule as the collision flags.
+        from kiro_crew.work_ledger import WorkItem
+
+        state = _state(tmp_path)
+        state.projects.create_project("P", project_id="grp-1")
+        coord = _slot("chat-coord", "grp-1")
+        foreign = _slot("chat-foreign", "grp-other")  # different project
+        state = _state(tmp_path)
+        state.projects.create_project("P", project_id="grp-1")
+        coord = _slot("chat-coord", "grp-1")
+        foreign = _slot("chat-foreign", "grp-other")  # different project
+        state._slots = {"chat-coord": coord, "chat-foreign": foreign}
+        # coord is a conductor with one item bound to the FOREIGN worker (not a
+        # member of grp-1).
+        item = WorkItem(item_id="it_ff001122", title="T", state="open",
+                        worker_session_key="chat-foreign")
+        self._patch_ledger(
+            monkeypatch, conductors={"chat-coord"}, items_by_key={"chat-coord": [item]}
+        )
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.get("/api/projects/grp-1/panel")
+            data = await resp.json()
+        assert len(data["work"]) == 1
+        assert data["work"][0]["worker"] is None  # foreign worker id not leaked
