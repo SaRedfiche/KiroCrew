@@ -215,8 +215,15 @@ class TestProjectPanelWorkRollup:
 
     @staticmethod
     def _patch_ledger(monkeypatch, *, conductors, items_by_key):
-        """conductors: set of slot keys that ARE conductors.
-        items_by_key: {slot_key: [WorkItem, ...]}."""
+        """conductors: set of EFFECTIVE session keys that ARE conductors.
+        items_by_key: {effective_session_key: [WorkItem, ...]}.
+
+        Keyed by the EFFECTIVE session key (e.g. 'dashboard:chat-coord', or a
+        channel slot's 'slack:<ts>') because that is the on-wire
+        KIROCREW_SESSION_KEY the conductor tools write the ledger under — NOT
+        slot.key. A panel that (wrongly) looked the ledger up by slot.key would
+        pass the wrong key here and get None, so this discrimination is what
+        pins the effective-key contract (adversarial-review B1/H1)."""
         from kiro_crew.dashboard import project_panel
         from kiro_crew.work_ledger import ConductorRecord
 
@@ -239,6 +246,8 @@ class TestProjectPanelWorkRollup:
         worker = _slot("chat-worker", "grp-1", title="Worker")
         state._slots = {"chat-coord": coord, "chat-worker": worker}
 
+        # worker_session_key is stored as the worker's EFFECTIVE key (what the
+        # conductor's bind wrote), so the in-project match resolves it.
         item = WorkItem(
             item_id="it_abc12345",
             title="Do subtask A",
@@ -247,10 +256,13 @@ class TestProjectPanelWorkRollup:
             summary="halfway",
             pr=42,
             round=1,
-            worker_session_key="chat-worker",
+            worker_session_key="dashboard:chat-worker",
         )
+        # Ledger keyed by the coordinator's EFFECTIVE key.
         self._patch_ledger(
-            monkeypatch, conductors={"chat-coord"}, items_by_key={"chat-coord": [item]}
+            monkeypatch,
+            conductors={"dashboard:chat-coord"},
+            items_by_key={"dashboard:chat-coord": [item]},
         )
 
         async with TestClient(TestServer(_make_app(state))) as client:
@@ -266,10 +278,89 @@ class TestProjectPanelWorkRollup:
         assert w["coordinator"] == "dashboard:chat-coord"
         assert w["item_id"] == "it_abc12345"
         assert w["title"] == "Do subtask A"
+        assert w["state"] == "open"
         assert w["status"] == "progress"
         assert w["summary"] == "halfway"
         assert w["pr"] == 42
-        assert w["worker"] == "dashboard:chat-worker"  # effective form of the raw key
+        assert w["round"] == 1
+        assert w["worker"] == "dashboard:chat-worker"
+
+    @pytest.mark.asyncio
+    async def test_channel_born_coordinator_is_found_by_effective_key(self, tmp_path, monkeypatch):
+        # A channel-born coordinator's turns run under its linked channel key
+        # (slack:<ts>), so the ledger is written there — NOT under slot.key. The
+        # panel must look it up by effective_session_key. This is the case that
+        # a raw-slot-key lookup silently missed (adversarial-review B1).
+        from kiro_crew.work_ledger import WorkItem
+
+        state = _state(tmp_path)
+        state.projects.create_project("P", project_id="grp-1")
+        coord = _slot("chat-chan", "grp-1", title="ChannelCoord")
+        coord.linked_session_key = "slack:1700000000.001"  # effective key
+        state._slots = {"chat-chan": coord}
+
+        item = WorkItem(item_id="it_chan0001", title="Channel task", state="open")
+        self._patch_ledger(
+            monkeypatch,
+            conductors={"slack:1700000000.001"},
+            items_by_key={"slack:1700000000.001": [item]},
+        )
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.get("/api/projects/grp-1/panel")
+            data = await resp.json()
+
+        by_key = {r["session"]: r for r in data["sessions"]}
+        assert by_key["slack:1700000000.001"].get("is_coordinator") is True
+        assert len(data["work"]) == 1
+        assert data["work"][0]["coordinator"] == "slack:1700000000.001"
+        assert data["work"][0]["item_id"] == "it_chan0001"
+
+    @pytest.mark.asyncio
+    async def test_conductor_with_zero_items_still_flagged(self, tmp_path, monkeypatch):
+        # is_coordinator must be tied to HAVING a ledger, not to having items —
+        # a conductor mid-planning with no items yet is still a coordinator, and
+        # contributes no work rows.
+        state = _state(tmp_path)
+        state.projects.create_project("P", project_id="grp-1")
+        coord = _slot("chat-coord", "grp-1")
+        state._slots = {"chat-coord": coord}
+        self._patch_ledger(
+            monkeypatch,
+            conductors={"dashboard:chat-coord"},
+            items_by_key={},  # ledger exists, no items
+        )
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.get("/api/projects/grp-1/panel")
+            data = await resp.json()
+        assert data["sessions"][0].get("is_coordinator") is True
+        assert data["work"] == []
+
+    @pytest.mark.asyncio
+    async def test_multiple_conductors_attribute_items_per_coordinator(self, tmp_path, monkeypatch):
+        # Two coordinators in one project: work[] accumulates across both and
+        # each row's coordinator is its own effective key.
+        from kiro_crew.work_ledger import WorkItem
+
+        state = _state(tmp_path)
+        state.projects.create_project("P", project_id="grp-1")
+        c1 = _slot("chat-c1", "grp-1")
+        c2 = _slot("chat-c2", "grp-1")
+        state._slots = {"chat-c1": c1, "chat-c2": c2}
+        self._patch_ledger(
+            monkeypatch,
+            conductors={"dashboard:chat-c1", "dashboard:chat-c2"},
+            items_by_key={
+                "dashboard:chat-c1": [WorkItem(item_id="it_c1aaaaaa", title="A", state="open")],
+                "dashboard:chat-c2": [WorkItem(item_id="it_c2bbbbbb", title="B", state="open")],
+            },
+        )
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.get("/api/projects/grp-1/panel")
+            data = await resp.json()
+        assert len(data["work"]) == 2
+        by_item = {w["item_id"]: w["coordinator"] for w in data["work"]}
+        assert by_item["it_c1aaaaaa"] == "dashboard:chat-c1"
+        assert by_item["it_c2bbbbbb"] == "dashboard:chat-c2"
 
     @pytest.mark.asyncio
     async def test_no_ledger_means_empty_work_and_no_flag(self, tmp_path, monkeypatch):
@@ -296,17 +387,15 @@ class TestProjectPanelWorkRollup:
         state.projects.create_project("P", project_id="grp-1")
         coord = _slot("chat-coord", "grp-1")
         foreign = _slot("chat-foreign", "grp-other")  # different project
-        state = _state(tmp_path)
-        state.projects.create_project("P", project_id="grp-1")
-        coord = _slot("chat-coord", "grp-1")
-        foreign = _slot("chat-foreign", "grp-other")  # different project
         state._slots = {"chat-coord": coord, "chat-foreign": foreign}
-        # coord is a conductor with one item bound to the FOREIGN worker (not a
-        # member of grp-1).
+        # coord is a conductor with one item bound to the FOREIGN worker (whose
+        # effective key is not a member of grp-1).
         item = WorkItem(item_id="it_ff001122", title="T", state="open",
-                        worker_session_key="chat-foreign")
+                        worker_session_key="dashboard:chat-foreign")
         self._patch_ledger(
-            monkeypatch, conductors={"chat-coord"}, items_by_key={"chat-coord": [item]}
+            monkeypatch,
+            conductors={"dashboard:chat-coord"},
+            items_by_key={"dashboard:chat-coord": [item]},
         )
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.get("/api/projects/grp-1/panel")
