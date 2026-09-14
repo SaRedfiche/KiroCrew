@@ -1306,6 +1306,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     if name == "session_create":
         args = validate_tool_args(args, SESSION_CREATE_SCHEMA)
         payload: dict[str, Any] = {"title": args.get("title", ""), "agent": args.get("agent", "")}
+        pgid = str(args.get("project_group_id") or "")
+        if pgid:
+            payload["project_group_id"] = pgid
         folder_ref = str(args.get("folder") or "")
         folder_label = ""
         made_note = ""

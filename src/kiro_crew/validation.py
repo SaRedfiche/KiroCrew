@@ -2939,6 +2939,14 @@ SESSION_CREATE_SCHEMA = ToolSchema(
         # folder reference; the two readings share no charset, so only the
         # length is checked here.
         FieldSpec("folder", str, required=False, default="", max_len=_ARTIFACT_FOLDER_REF_MAX),
+        # An existing project-coordination group id to tag the new session into
+        # at birth, so a coordinator's dispatched worker is a group member the
+        # project panel's rollup surfaces immediately. Attach-only: the create
+        # route refuses an unknown id (project_group_not_found). Bounded like the
+        # other opaque-id fields.
+        FieldSpec(
+            "project_group_id", str, required=False, default="", max_len=MAX_SHORT_STRING
+        ),
     ],
 )
 

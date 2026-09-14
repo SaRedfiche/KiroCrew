@@ -3044,6 +3044,7 @@ def _save_slot_to_history(
                 #   writer that has not learned them).
                 fields: dict = {
                     "folder_id": slot.folder_id or "",
+                    "project_group_id": slot.project_group_id or "",
                     "tags": list(slot.tags),
                     "pinned": bool(slot.pinned),
                     "mode": slot.mode or "",
