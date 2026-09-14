@@ -332,3 +332,55 @@ project on the attach-by-name path (orphaning other sessions' tags). Fixed on
   follow-up + JSDoc).
 
 **Both high-bar lanes (GPT + Opus) PASS on the candidate SHA → GO.**
+
+
+---
+
+## P2.2 — work-ledger progress rollup in the project panel
+
+**Head SHA:** `968bb569a`. **Base:** `1281db62e` (the tagging-UI branch tip — P2.2
+builds on the full Phase-1 + tagging-UI stack, which is why it branches off that
+tip rather than origin/main; it is a distinct feature gated on its own delta).
+
+**What it ships:** `GET /api/projects/{id}/panel` now returns a `work` rollup
+DERIVED from group members' conductor ledgers (design §12, decisions Q1/Q2 — no
+stored coupling): each live tagged session with a readable conductor ledger is
+flagged `is_coordinator`, and its work items surface with plan+progress fields
+(title/state/status/summary/pr/round) plus the in-project worker. Pure gateway
+derivation in the existing off-loop scan.
+
+**Build/tests:** frontend unchanged (backend-only payload); `test_project_panel.py`
+14 tests incl. the 6 rollup cases (flag+items, channel-born coordinator, zero-items
+conductor, multiple conductors, no-ledger empty, cross-project worker non-leak);
+77+ green across the coordination suite.
+
+**ASH:** RUN via MCP (`f727fad2`, dashboard dir, MEDIUM, 9 scanners incl.
+bandit/detect-secrets/checkov) — **0 findings**. (Re-run not needed after the
+key-logic fix: delta was logic + tests, no new imports/surface.)
+
+**Holmes:** RUN (`90e21234`, default baseline) — **0 findings**.
+
+**Adversarial pre-merge (crew, 4-axis on the P2.2 diff):** Security GO,
+Docs/AI-necessity GO; Tests NO-GO (2 Medium coverage gaps: zero-items conductor,
+multiple conductors) AND **Correctness NO-GO with a Blocker (B1) + High (H1)** —
+the rollup looked the ledger up by the RAW slot key (`s.key`), but the conductor
+tools write it under the EFFECTIVE session key (the on-wire `KIROCREW_SESSION_KEY`:
+`chat_runner.py:6149` sets the turn key = `effective_session_key(slot)`,
+`acp/client.py:5175` injects it). `effective_session_key` prefixes `dashboard:`
+(or is a channel slot's `slack:<ts>`), so `slot.key` never matches — the rollup was
+silently DEAD for every dashboard coordinator, and worker ids were always nulled.
+Two axes DISAGREED (Tests mutation-tested and concluded raw was right, because its
+stubs were also keyed raw); adjudicated by tracing to the real writer in source —
+effective is correct.
+
+**Fix (`968bb569a`):** key `read_conductor`/`list_work_items` and the worker
+non-leak set off the effective session id; drop `raw_key` entirely. Added the
+channel-born-coordinator test (the case the raw lookup missed) + zero-items +
+multi-conductor tests.
+
+**Multi-model panel (on `968bb569a`, report `docs/scan-p22-panel.md`):** GATE
+**GO** — GPT 5.6 PASS, Opus 4.8 PASS, First-Principles PASS, Design PASS (UX
+skipped, out of scope for a backend change). No CONCERNS.
+
+**Both high-bar lanes (GPT + Opus) PASS on the candidate SHA → GO.** The adversarial
+Blocker was a real silent-dead-feature bug caught pre-merge and fixed.
