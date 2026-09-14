@@ -105,11 +105,6 @@ async def api_project_panel(request: web.Request) -> web.Response:
     snap = [
         {
             "session": effective_session_key(s),
-            # Raw slot key (NOT the effective/prefixed id) — the work-ledger is
-            # keyed by the gateway session key the conductor tools write under
-            # (require_strict_session_key), so the rollup must look it up by this,
-            # not by effective_session_key. Popped before the row is returned.
-            "raw_key": s.key,
             "title": getattr(s, "title", "") or "",
             "agent": getattr(s, "agent", "") or "",
             "project_dir": getattr(s, "project", "") or "",
@@ -164,25 +159,29 @@ async def api_project_panel(request: web.Request) -> web.Response:
         # scan. list_work_items()/read_conductor() are lock-free and skip torn
         # files, so a bad ledger reads as "no items", never a crash.
         #
-        # KEYS: the ledger is keyed by the RAW slot key (raw_key), which is what
-        # the conductor tools write under; the panel's session ids are the
-        # effective (prefixed) form. worker_session_key on an item is likewise a
-        # raw key, so the in-project non-leak check compares against the set of
-        # RAW keys of this project's members — never the effective set.
-        project_raw_keys = {r["raw_key"] for r in snap}
-        raw_to_effective = {r["raw_key"]: r["session"] for r in snap}
+        # KEYS: the ledger is keyed by the session's EFFECTIVE key — the on-wire
+        # KIROCREW_SESSION_KEY the conductor tools write under. That is what a
+        # turn runs as: chat_runner sets session_key = effective_session_key(slot)
+        # and acp/client injects it as KIROCREW_SESSION_KEY, which
+        # require_strict_session_key returns to the ledger writers. It is NOT
+        # slot.key: effective_session_key adds the ``dashboard:`` prefix (or is
+        # the channel's ``slack:<ts>`` for a channel-born slot), so a raw-slot-key
+        # lookup misses even a plain dashboard coordinator (adversarial-review
+        # Blocker B1/H1). ``row["session"]`` IS the effective key, so the lookup,
+        # the coordinator id, and the worker non-leak set all use it.
+        project_session_keys = {r["session"] for r in snap}
         work: list[dict] = []
         for row in snap:
-            raw = row["raw_key"]
-            conductor = work_ledger.read_conductor(raw)
+            sk = row["session"]
+            conductor = work_ledger.read_conductor(sk)
             if conductor is None:
                 continue
             row["is_coordinator"] = True  # derived display flag, not stored
-            for it in work_ledger.list_work_items(raw):
-                wk = it.worker_session_key
+            for it in work_ledger.list_work_items(sk):
+                wk = it.worker_session_key  # stored as the worker's effective key
                 work.append(
                     {
-                        "coordinator": row["session"],
+                        "coordinator": sk,
                         "item_id": it.item_id,
                         "title": it.title,
                         "state": it.state,
@@ -190,18 +189,13 @@ async def api_project_panel(request: web.Request) -> web.Response:
                         "summary": it.summary,
                         "pr": it.pr,
                         "round": it.round,
-                        # worker id (as the panel's effective form) only when it
-                        # is a session of THIS project — never leak a worker
-                        # tagged into another project (same rule as collisions).
-                        "worker": (
-                            raw_to_effective.get(wk)
-                            if wk in project_raw_keys
-                            else None
-                        ),
+                        # worker id only when it is a session of THIS project —
+                        # never leak a worker tagged into another project (same
+                        # rule as the collision flags above). Both sides are
+                        # effective keys, so the comparison is apples-to-apples.
+                        "worker": wk if wk in project_session_keys else None,
                     }
                 )
-        for row in snap:
-            row.pop("raw_key", None)
         return {
             "project": {"id": record.id, "name": record.name, "repos": list(record.repos)},
             "sessions": snap,
