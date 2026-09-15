@@ -455,3 +455,65 @@ skipped, backend-only). No CONCERNS.
 the reviewed SHA is a dead-line removal + comment + 3 tests (non-behavioral —
 gate re-run not required; 365 coordination-suite tests incl. the drift-guard
 green). Both review gates GO. Final head: `b9f2d3e25`.
+
+---
+
+## Coordination panel page (Chat side-panel) — `feature/project-coordination-panel-page`
+
+**Change:** human-facing "Coordination" side-panel in the Chat surface —
+`CoordinationPanel.tsx` renders the P2.2 `GET /api/projects/{id}/panel` payload
+(project/repos, member sessions + is_coordinator badge, same-file/same-worktree
+collisions, work-ledger rollup) for the active session's `project_group_id`;
+empty/loading/error states. Wired into the compiler-enforced Chat panel
+registries (usePanelTabs ViewKind + tables, SidePanel icon/label/menu/VIEW_KINDS,
+ActivityViewer view-union + body dispatch) + `api.getProjectPanel`. 15 i18n keys
+authored in en.manual.json, translated to all 11 locales via the real
+translate pipeline (per-locale sub-agents), en-XA regenerated. Frontend-only;
+the `/panel` endpoint already existed.
+
+**Build/tests:** tsc clean; 670 vitest incl. i18n parity/placeholder/CJK-style
+(665) + 5 CoordinationPanel cases (untagged / tagged / loading / error /
+same-worktree+empty-arrays) green; `make frontend` builds. Committed lock file:
+`website/package-lock.json`.
+
+**ASH (on `274577854`, `website/src`):** GATE clean — **0 findings across 9
+scanners** (semgrep + opengrep + bandit SAST, grype + npm-audit + syft SCA/SBOM,
+detect-secrets, checkov + cdk-nag). 0 attributable to the diff (grep of scanner
+outputs: no reference to the changed files).
+
+**Holmes (on `274577854`, default baseline, project `23316cca`):** complete —
+**0 findings**.
+
+**Adversarial crew (on `274577854`, 4 axes 4/4):** result **GO after fix**.
+- Correctness GO; Security GO (attack surface checked against source: all server
+  strings are escaped JSX text, no dangerouslySetInnerHTML; `encodeURIComponent`
+  blocks id path-traversal; `_sk` header matches the sibling method; settled
+  single-user threat model not raised, as instructed); Docs-honesty + AI-necessity
+  GO (commit accurate, endpoint+fields verified emitted by backend, all 11 locales
+  genuinely translated with →/… preserved, zero runtime LLM).
+- **[High→fixed, Tests] NO-GO:** panel had 5 render branches, test covered 2
+  (happy + untagged). Added loading (deferred promise), error (rejected +
+  auto-retry-hint), and same-worktree-collision/empty-arrays tests.
+
+**Multi-model panel (3 runs, fix-all-to-green):**
+- v1 (`274577854`, `docs/scan-coord-panel.md`): GATE GO — GPT PASS, Opus PASS;
+  First-Principles/Design/UX CONCERNS (polling-in-background, raw collision ids,
+  error retry, lowercase badge).
+- v2 (`13a66ce58`, `docs/scan-coord-panel-v2.md`): GATE GO — added
+  `refetchIntervalInBackground:false`, resolved collision ids → member titles,
+  error auto-retry hint. First-Principles + Design flipped to **PASS**; UX
+  CONCERNS (badge casing, empty-sessions silence).
+- v3 (`8245d2fb0`, `docs/scan-coord-panel-v3.md`): GATE GO — added CSS
+  `text-transform:capitalize` on the badge + "No active sessions" empty note.
+  GPT/Opus/First-Principles PASS; Design/UX CONCERNS adjudicated: Design's
+  polling concern self-confirmed as intended live-view behavior (panel unmounts
+  on view switch via ActivityViewer `&&`); UX's residual was de "koordinator"
+  lowercase — fixed to "Koordinator".
+
+**Paired verdict @ crew+panel-reviewed `8245d2fb0` → final `9a63e3435`:**
+crew GO (Tests High fixed) | panel GO (GPT/Opus/First-Principles PASS; Design/UX
+CONCERNS = intended-behavior + model-variance taste, all real findings fixed).
+Terminating condition met: both high-bar lanes PASS, remainder is taste/variance,
+no harm path. The `9a63e3435` delta over the panel-reviewed `8245d2fb0` is a
+single German i18n value capitalization (badge text, no logic) — gate re-run not
+required; 670 tests green. Both review gates GO. Final head: `9a63e3435`.

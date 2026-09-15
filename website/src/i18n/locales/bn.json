@@ -8179,7 +8179,8 @@
       "side": "সাইড চ্যাট",
       "subagents": "সাবএজেন্ট",
       "summary": "সারসংক্ষেপ",
-      "workflows": "ওয়ার্কফ্লো"
+      "workflows": "ওয়ার্কফ্লো",
+      "coordination": "সমন্বয়"
     },
     "useSceneInteraction": {
       "all_slots_are_occupied": "সব স্লট ভর্তি",
@@ -9412,7 +9413,9 @@
         "switch_to_split_view": "স্প্লিট ভিউতে যাও",
         "switch_to_unified_view": "ইউনিফায়েড ভিউতে যাও",
         "this_app_render_is_no_longer_available": "এই অ্যাপ রেন্ডার আর উপলব্ধ নেই। এটি দেখতে টুলটি আবার চালান।",
-        "turn_diff": "টার্ন ডিফ"
+        "turn_diff": "টার্ন ডিফ",
+        "menu_coordination": "সমন্বয়",
+        "menu_coordination_desc": "এই সেশনের প্রকল্পের সেশন, সংঘর্ষ ও কাজ"
       },
       "stopEventCard": {
         "stop_failed_session_reset": "থামানো ব্যর্থ, সেশন রিসেট হয়েছে",
@@ -9687,6 +9690,20 @@
         "copy_text_failed": "কপি করা যায়নি",
         "copy_text_unavailable": "এখানে ক্লিপবোর্ড ব্লক করা আছে। তোমার পোস্টের লেখাটা সিলেক্ট করা আছে — Ctrl+C / ⌘C চাপো। কার্ডের যে লেখা তুমি বদলেছ, সেটা কার্ড থেকেই কপি করো।",
         "export_failed": "শেয়ার কার্ড তৈরি করা যায়নি"
+      },
+      "coordination": {
+        "untagged": "এই সেশনটি কোনো প্রকল্পে ট্যাগ করা নেই।",
+        "untagged_hint": "সেশন মেনু → Project দিয়ে এটি ট্যাগ করুন, যাতে একই প্রকল্পের অন্যান্য সেশন, সংঘর্ষ ও কাজ এখানে দেখা যায়।",
+        "loading": "প্রকল্প লোড হচ্ছে…",
+        "error": "প্রকল্প প্যানেল লোড করা যায়নি।",
+        "sessions": "সেশন",
+        "coordinator": "সমন্বয়কারী",
+        "collisions": "সংঘর্ষ",
+        "same_file": "একই ফাইল",
+        "same_worktree": "একই worktree",
+        "work": "কাজ",
+        "error_hint": "এটি স্বয়ংক্রিয়ভাবে আবার চেষ্টা করবে।",
+        "no_sessions": "কোনো সক্রিয় সেশন নেই"
       }
     },
     "chatPage": {

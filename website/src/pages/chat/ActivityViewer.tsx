@@ -26,6 +26,7 @@ import { runBelongsToSlot } from '../../apps/workflows/runModel'
 
 import { ContextBreakdownTab } from '../ContextBreakdownPanel'
 import SessionSummaryTab from './SessionSummaryTab'
+import CoordinationPanel from './CoordinationPanel'
 import { i18nT } from '../../i18n/t'
 import GitPanel from '../../components/GitPanel'
 import { fmtDateFields } from '../../i18n/format'
@@ -847,7 +848,7 @@ export default function ActivityViewer({ subagents, toolLog, open, onToggle, slo
   chatMode?: string
   /** When set, render ONLY this view and hide the internal SegmentedControl.
    *  Used by SidePanel, which owns the top-level tab strip. */
-  view?: 'changes' | 'issues' | 'subagents' | 'logs' | 'context' | 'links' | 'artifacts' | 'side' | 'workflows' | 'git' | 'summary' | 'pins'
+  view?: 'changes' | 'issues' | 'subagents' | 'logs' | 'context' | 'links' | 'artifacts' | 'side' | 'workflows' | 'git' | 'summary' | 'pins' | 'coordination'
 }) {
   const dispatch = useAppDispatch()
   const [, setSelected] = useState(0)
@@ -1008,7 +1009,7 @@ export default function ActivityViewer({ subagents, toolLog, open, onToggle, slo
         <div className="px-3 py-2 shrink-0 flex justify-center">
           <SegmentedControl
             segments={TABS}
-            value={effectiveTab === 'context' || effectiveTab === 'git' || effectiveTab === 'summary' || effectiveTab === 'pins' ? tab : effectiveTab}
+            value={effectiveTab === 'context' || effectiveTab === 'git' || effectiveTab === 'summary' || effectiveTab === 'pins' || effectiveTab === 'coordination' ? tab : effectiveTab}
             onChange={t => { setTab(t); explicitTab.current = true; dispatch(openActivityToTab(t)) }}
             layoutId="activity-tab"
           />
@@ -1200,6 +1201,10 @@ export default function ActivityViewer({ subagents, toolLog, open, onToggle, slo
       {/* Session summary — the goal-level view of this session, so returning to
           it does not mean re-reading the transcript. */}
       {effectiveTab === 'summary' && <SessionSummaryTab key={slot} slot={slot} />}
+
+      {/* Project coordination — the progress/collision/work view for the group
+          this session is tagged into (P2.2/P2.3). Per-slot, keyed on slot. */}
+      {effectiveTab === 'coordination' && <CoordinationPanel key={slot} slot={slot} />}
 
       {/* Pinned messages — the user's own bookmarks in this transcript. Grouped
           with Summary rather than given its own dock: both are ways back into

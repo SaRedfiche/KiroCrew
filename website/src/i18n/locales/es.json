@@ -8291,7 +8291,8 @@
       "side": "Chat lateral",
       "subagents": "Subagentes",
       "summary": "Resumen",
-      "workflows": "Flujos de trabajo"
+      "workflows": "Flujos de trabajo",
+      "coordination": "Coordinación"
     },
     "useSceneInteraction": {
       "all_slots_are_occupied": "Todos los slots están ocupados",
@@ -9544,7 +9545,9 @@
         "switch_to_split_view": "Cambiar a la vista dividida",
         "switch_to_unified_view": "Cambiar a la vista unificada",
         "this_app_render_is_no_longer_available": "Esta representación de la app ya no está disponible. Ejecuta la herramienta de nuevo para verla.",
-        "turn_diff": "Diff del turno"
+        "turn_diff": "Diff del turno",
+        "menu_coordination": "Coordinación",
+        "menu_coordination_desc": "Sesiones, colisiones y trabajo en el proyecto de esta sesión"
       },
       "stopEventCard": {
         "stop_failed_session_reset": "No se pudo detener, sesión restablecida",
@@ -9827,6 +9830,20 @@
         "copy_text_failed": "No se pudo copiar",
         "copy_text_unavailable": "El portapapeles está bloqueado aquí. El texto de tu publicación está seleccionado: pulsa Ctrl+C / ⌘C. El texto de la tarjeta que hayas editado, cópialo desde la propia tarjeta.",
         "export_failed": "No se pudo generar la tarjeta para compartir"
+      },
+      "coordination": {
+        "untagged": "Esta sesión no está asignada a un proyecto.",
+        "untagged_hint": "Asígnala desde el menú de sesión → Proyecto para ver aquí otras sesiones, colisiones y trabajo en el mismo proyecto.",
+        "loading": "Cargando proyecto…",
+        "error": "No se pudo cargar el panel del proyecto.",
+        "sessions": "Sesiones",
+        "coordinator": "coordinador",
+        "collisions": "Colisiones",
+        "same_file": "Mismo archivo",
+        "same_worktree": "Mismo worktree",
+        "work": "Trabajo",
+        "error_hint": "Se reintentará automáticamente.",
+        "no_sessions": "No hay sesiones activas"
       }
     },
     "chatPage": {

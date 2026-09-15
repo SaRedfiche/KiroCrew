@@ -3193,6 +3193,12 @@ export const api = {
    *  source for the session Project submenu. NOT `/api/projects` (that is the
    *  task-runner's unrelated project concept); this is the ProjectStore table. */
   listCoordinationProjects: () => fetch('/api/projects/coordination', { headers: { ..._sk } }).then(j),
+  /** Per-project coordination panel snapshot: the project record, its live
+   *  member sessions (title/agent/branch + is_coordinator), collision flags
+   *  (same-file / same-worktree), and the work-ledger rollup. Data source for
+   *  the Chat Coordination side-panel; GET /api/projects/{id}/panel (P2.2). */
+  getProjectPanel: (projectGroupId: string) =>
+    fetch('/api/projects/' + encodeURIComponent(projectGroupId) + '/panel', { headers: { ..._sk } }).then(j),
   /** Tag a session into a project (create-or-attach-or-untag), mirroring the
    *  backend's one endpoint. Pass `{name}` to CREATE a project and attach;
    *  `{projectGroupId}` to attach to an existing one; neither to UNTAG. The

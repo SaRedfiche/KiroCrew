@@ -8067,7 +8067,8 @@
       "side": "사이드 채팅",
       "subagents": "서브에이전트",
       "summary": "요약",
-      "workflows": "워크플로"
+      "workflows": "워크플로",
+      "coordination": "협업"
     },
     "useSceneInteraction": {
       "all_slots_are_occupied": "모든 슬롯이 사용 중입니다",
@@ -9280,7 +9281,9 @@
         "switch_to_split_view": "분할 보기로 전환",
         "switch_to_unified_view": "통합 보기로 전환",
         "this_app_render_is_no_longer_available": "이 앱 렌더링은 더 이상 사용할 수 없습니다. 도구를 다시 실행해 확인하세요.",
-        "turn_diff": "턴 차이"
+        "turn_diff": "턴 차이",
+        "menu_coordination": "협업",
+        "menu_coordination_desc": "이 세션 프로젝트의 세션, 충돌 및 작업"
       },
       "stopEventCard": {
         "stop_failed_session_reset": "중지에 실패하여 세션을 초기화했습니다",
@@ -9547,6 +9550,20 @@
         "copy_text_failed": "복사하지 못했습니다",
         "copy_text_unavailable": "이 환경에서는 클립보드가 차단되어 있습니다. 게시글 텍스트가 선택되어 있으니 Ctrl+C / ⌘C를 누르세요. 편집한 카드 텍스트는 카드에서 직접 복사하세요.",
         "export_failed": "공유 카드를 만들 수 없습니다"
+      },
+      "coordination": {
+        "untagged": "이 세션은 프로젝트에 태그되지 않았습니다.",
+        "untagged_hint": "세션 메뉴 → 프로젝트에서 태그하면 같은 프로젝트의 다른 세션, 충돌, 작업을 여기서 볼 수 있습니다.",
+        "loading": "프로젝트 로딩 중…",
+        "error": "프로젝트 패널을 불러올 수 없습니다.",
+        "sessions": "세션",
+        "coordinator": "coordinator",
+        "collisions": "충돌",
+        "same_file": "같은 파일",
+        "same_worktree": "같은 worktree",
+        "work": "작업",
+        "error_hint": "자동으로 다시 시도합니다.",
+        "no_sessions": "활성 세션이 없습니다"
       }
     },
     "chatPage": {

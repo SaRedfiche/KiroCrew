@@ -8067,7 +8067,8 @@
       "side": "随手问",
       "subagents": "子代理",
       "summary": "摘要",
-      "workflows": "工作流"
+      "workflows": "工作流",
+      "coordination": "协同"
     },
     "useSceneInteraction": {
       "all_slots_are_occupied": "所有槽位都已占用",
@@ -9280,7 +9281,9 @@
         "switch_to_split_view": "切换到并排视图",
         "switch_to_unified_view": "切换到统一视图",
         "this_app_render_is_no_longer_available": "此应用渲染已不可用。请重新运行工具以查看。",
-        "turn_diff": "本轮差异"
+        "turn_diff": "本轮差异",
+        "menu_coordination": "协同",
+        "menu_coordination_desc": "本会话项目中的会话、冲突和工作"
       },
       "stopEventCard": {
         "stop_failed_session_reset": "停止失败，会话已重置",
@@ -9547,6 +9550,20 @@
         "copy_text_failed": "复制失败",
         "copy_text_unavailable": "当前环境禁止写入剪贴板。文案已选中——按 Ctrl+C / ⌘C 复制。你改过的卡片文字请直接从卡片上复制。",
         "export_failed": "无法生成分享卡片"
+      },
+      "coordination": {
+        "untagged": "本会话未关联到任何项目。",
+        "untagged_hint": "通过会话菜单 → 项目进行关联，即可在此查看同一项目的其他会话、冲突和工作。",
+        "loading": "正在加载项目…",
+        "error": "无法加载项目面板。",
+        "sessions": "会话",
+        "coordinator": "协调者",
+        "collisions": "冲突",
+        "same_file": "相同文件",
+        "same_worktree": "相同工作树",
+        "work": "工作",
+        "error_hint": "将自动重试。",
+        "no_sessions": "没有活动会话"
       }
     },
     "chatPage": {

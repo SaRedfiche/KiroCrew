@@ -8291,7 +8291,8 @@
       "side": "Chat lateral",
       "subagents": "Subagentes",
       "summary": "Resumo",
-      "workflows": "Workflows"
+      "workflows": "Workflows",
+      "coordination": "Coordenação"
     },
     "useSceneInteraction": {
       "all_slots_are_occupied": "Todos os slots estão ocupados",
@@ -9544,7 +9545,9 @@
         "switch_to_split_view": "Alternar para a visualização dividida",
         "switch_to_unified_view": "Alternar para a visualização unificada",
         "this_app_render_is_no_longer_available": "Esta renderização do app não está mais disponível. Execute a ferramenta novamente para vê-la.",
-        "turn_diff": "Diff do turno"
+        "turn_diff": "Diff do turno",
+        "menu_coordination": "Coordenação",
+        "menu_coordination_desc": "Sessões, colisões e trabalho no projeto desta sessão"
       },
       "stopEventCard": {
         "stop_failed_session_reset": "Falha ao parar, sessão redefinida",
@@ -9827,6 +9830,20 @@
         "copy_text_failed": "Falha ao copiar",
         "copy_text_unavailable": "A área de transferência está bloqueada aqui. O texto da sua publicação está selecionado — pressione Ctrl+C / ⌘C. O texto do cartão que você editou, copie do próprio cartão.",
         "export_failed": "Não foi possível gerar o cartão de compartilhamento"
+      },
+      "coordination": {
+        "untagged": "Esta sessão não está associada a um projeto.",
+        "untagged_hint": "Associe-a pelo menu da sessão → Projeto para ver outras sessões, colisões e trabalho no mesmo projeto aqui.",
+        "loading": "Carregando projeto…",
+        "error": "Não foi possível carregar o painel do projeto.",
+        "sessions": "Sessões",
+        "coordinator": "coordenador",
+        "collisions": "Colisões",
+        "same_file": "Mesmo arquivo",
+        "same_worktree": "Mesma worktree",
+        "work": "Trabalho",
+        "error_hint": "Tentaremos novamente automaticamente.",
+        "no_sessions": "Nenhuma sessão ativa"
       }
     },
     "chatPage": {

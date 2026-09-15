@@ -8291,7 +8291,8 @@
       "side": "Chat laterale",
       "subagents": "Subagenti",
       "summary": "Riepilogo",
-      "workflows": "Workflow"
+      "workflows": "Workflow",
+      "coordination": "Coordinamento"
     },
     "useSceneInteraction": {
       "all_slots_are_occupied": "Tutti gli slot sono occupati",
@@ -9544,7 +9545,9 @@
         "switch_to_split_view": "Passa alla vista divisa",
         "switch_to_unified_view": "Passa alla vista unificata",
         "this_app_render_is_no_longer_available": "Questo rendering dell'app non è più disponibile. Esegui di nuovo lo strumento per visualizzarlo.",
-        "turn_diff": "Diff del turno"
+        "turn_diff": "Diff del turno",
+        "menu_coordination": "Coordinamento",
+        "menu_coordination_desc": "Sessioni, collisioni e lavoro nel progetto di questa sessione"
       },
       "stopEventCard": {
         "stop_failed_session_reset": "Arresto non riuscito, sessione reimpostata",
@@ -9827,6 +9830,20 @@
         "copy_text_failed": "Copia non riuscita",
         "copy_text_unavailable": "Gli appunti sono bloccati qui. Il testo del tuo post è selezionato: premi Ctrl+C / ⌘C. Il testo della card che hai modificato va copiato dalla card stessa.",
         "export_failed": "Impossibile generare la scheda di condivisione"
+      },
+      "coordination": {
+        "untagged": "Questa sessione non è associata a un progetto.",
+        "untagged_hint": "Associala tramite il menu della sessione → Progetto per vedere qui altre sessioni, collisioni e lavoro sullo stesso progetto.",
+        "loading": "Caricamento del progetto…",
+        "error": "Impossibile caricare il pannello del progetto.",
+        "sessions": "Sessioni",
+        "coordinator": "coordinatore",
+        "collisions": "Collisioni",
+        "same_file": "Stesso file",
+        "same_worktree": "Stesso worktree",
+        "work": "Lavoro",
+        "error_hint": "Verrà riprovato automaticamente.",
+        "no_sessions": "Nessuna sessione attiva"
       }
     },
     "chatPage": {

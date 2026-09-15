@@ -8291,7 +8291,8 @@
       "side": "Chat annexe",
       "subagents": "Sous-agents",
       "summary": "Résumé",
-      "workflows": "Workflows"
+      "workflows": "Workflows",
+      "coordination": "Coordination"
     },
     "useSceneInteraction": {
       "all_slots_are_occupied": "Tous les emplacements sont occupés",
@@ -9544,7 +9545,9 @@
         "switch_to_split_view": "Passer en vue divisée",
         "switch_to_unified_view": "Passer en vue unifiée",
         "this_app_render_is_no_longer_available": "Ce rendu d'application n'est plus disponible. Exécutez à nouveau l'outil pour l'afficher.",
-        "turn_diff": "Diff du tour"
+        "turn_diff": "Diff du tour",
+        "menu_coordination": "Coordination",
+        "menu_coordination_desc": "Sessions, collisions et travaux dans le projet de cette session"
       },
       "stopEventCard": {
         "stop_failed_session_reset": "Échec de l'arrêt, session réinitialisée",
@@ -9827,6 +9830,20 @@
         "copy_text_failed": "Échec de la copie",
         "copy_text_unavailable": "Le presse-papiers est bloqué ici. Le texte de ta publication est sélectionné — appuie sur Ctrl+C / ⌘C. Le texte de la carte que tu as modifié se copie depuis la carte elle-même.",
         "export_failed": "Impossible de générer la carte de partage"
+      },
+      "coordination": {
+        "untagged": "Cette session n'est associée à aucun projet.",
+        "untagged_hint": "Associez-la via le menu de session → Projet pour voir ici les autres sessions, collisions et travaux du même projet.",
+        "loading": "Chargement du projet…",
+        "error": "Impossible de charger le panneau du projet.",
+        "sessions": "Sessions",
+        "coordinator": "coordinateur",
+        "collisions": "Collisions",
+        "same_file": "Même fichier",
+        "same_worktree": "Même worktree",
+        "work": "Travaux",
+        "error_hint": "Une nouvelle tentative aura lieu automatiquement.",
+        "no_sessions": "Aucune session active"
       }
     },
     "chatPage": {

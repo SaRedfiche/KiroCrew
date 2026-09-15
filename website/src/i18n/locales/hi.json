@@ -8179,7 +8179,8 @@
       "side": "साइड चैट",
       "subagents": "सब-एजेंट",
       "summary": "सारांश",
-      "workflows": "वर्कफ़्लो"
+      "workflows": "वर्कफ़्लो",
+      "coordination": "समन्वय"
     },
     "useSceneInteraction": {
       "all_slots_are_occupied": "सभी स्लॉट भरे हुए हैं",
@@ -9412,7 +9413,9 @@
         "switch_to_split_view": "स्प्लिट व्यू पर स्विच करें",
         "switch_to_unified_view": "यूनिफ़ाइड व्यू पर स्विच करें",
         "this_app_render_is_no_longer_available": "यह ऐप रेंडर अब उपलब्ध नहीं है। इसे देखने के लिए टूल फिर से चलाएँ।",
-        "turn_diff": "टर्न डिफ़"
+        "turn_diff": "टर्न डिफ़",
+        "menu_coordination": "समन्वय",
+        "menu_coordination_desc": "इस सत्र के प्रोजेक्ट में सत्र, टकराव और कार्य"
       },
       "stopEventCard": {
         "stop_failed_session_reset": "रोकना विफल, सत्र रीसेट",
@@ -9687,6 +9690,20 @@
         "copy_text_failed": "कॉपी नहीं हो सका",
         "copy_text_unavailable": "यहाँ क्लिपबोर्ड ब्लॉक है। तुम्हारे पोस्ट का टेक्स्ट चुना हुआ है — Ctrl+C / ⌘C दबाओ। कार्ड का जो टेक्स्ट तुमने बदला है, उसे कार्ड से ही कॉपी कर लो।",
         "export_failed": "शेयर कार्ड नहीं बनाया जा सका"
+      },
+      "coordination": {
+        "untagged": "यह सत्र किसी प्रोजेक्ट में टैग नहीं है।",
+        "untagged_hint": "इसे सत्र मेनू → प्रोजेक्ट के ज़रिए टैग करें ताकि यहाँ उसी प्रोजेक्ट के अन्य सत्र, टकराव और कार्य दिख सकें।",
+        "loading": "प्रोजेक्ट लोड हो रहा है…",
+        "error": "प्रोजेक्ट पैनल लोड नहीं हो सका।",
+        "sessions": "सत्र",
+        "coordinator": "समन्वयक",
+        "collisions": "टकराव",
+        "same_file": "समान फ़ाइल",
+        "same_worktree": "समान worktree",
+        "work": "कार्य",
+        "error_hint": "यह स्वचालित रूप से पुनः प्रयास करेगा।",
+        "no_sessions": "कोई सक्रिय सत्र नहीं"
       }
     },
     "chatPage": {

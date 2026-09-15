@@ -2973,6 +2973,7 @@
       "browser": "Browser",
       "changes": "Changes",
       "context": "Context",
+      "coordination": "Coordination",
       "diff": "{{name}} - Diff",
       "files": "Files",
       "links": "Links",
@@ -3297,6 +3298,20 @@
       "failed_to_clear_context": "Failed to clear context"
     },
     "chat": {
+      "coordination": {
+        "untagged": "This session isn't tagged into a project.",
+        "untagged_hint": "Tag it via the session menu → Project to see other sessions, collisions, and work on the same project here.",
+        "loading": "Loading project…",
+        "error": "Could not load the project panel.",
+        "error_hint": "It will retry automatically.",
+        "sessions": "Sessions",
+        "no_sessions": "No active sessions",
+        "coordinator": "coordinator",
+        "collisions": "Collisions",
+        "same_file": "Same file",
+        "same_worktree": "Same worktree",
+        "work": "Work"
+      },
       "workflowRunCard": {
         "cancel": "Cancel",
         "save_help": "Keep the exact workflow from this completed run in your global library.",
@@ -3460,6 +3475,8 @@
         "menu_subagents_desc": "Live agent activity & transcripts",
         "menu_summary": "Summary",
         "menu_summary_desc": "What this session is about and what needs you",
+        "menu_coordination": "Coordination",
+        "menu_coordination_desc": "Sessions, collisions & work in this session's project",
         "menu_workflows": "Workflows",
         "menu_workflows_desc": "Runs, phases & restartable steps",
         "open_in_editor_2": "Open {{path}} in editor",

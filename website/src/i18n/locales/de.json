@@ -8179,7 +8179,8 @@
       "side": "Seitenchat",
       "subagents": "Subagenten",
       "summary": "Zusammenfassung",
-      "workflows": "Workflows"
+      "workflows": "Workflows",
+      "coordination": "Koordination"
     },
     "useSceneInteraction": {
       "all_slots_are_occupied": "Alle Slots sind belegt",
@@ -9412,7 +9413,9 @@
         "switch_to_split_view": "Zur geteilten Ansicht wechseln",
         "switch_to_unified_view": "Zur einheitlichen Ansicht wechseln",
         "this_app_render_is_no_longer_available": "Diese App-Darstellung ist nicht mehr verfügbar. Führen Sie das Tool erneut aus, um sie anzuzeigen.",
-        "turn_diff": "Zug-Diff"
+        "turn_diff": "Zug-Diff",
+        "menu_coordination": "Koordination",
+        "menu_coordination_desc": "Sitzungen, Kollisionen & Arbeit im Projekt dieser Sitzung"
       },
       "stopEventCard": {
         "stop_failed_session_reset": "Stoppen fehlgeschlagen, Sitzung zurückgesetzt",
@@ -9687,6 +9690,20 @@
         "copy_text_failed": "Kopieren fehlgeschlagen",
         "copy_text_unavailable": "Die Zwischenablage ist hier blockiert. Dein Beitragstext ist markiert — drücke Strg+C / ⌘C. Bearbeiteten Kartentext kopierst du direkt aus der Karte.",
         "export_failed": "Die Share-Karte konnte nicht erzeugt werden"
+      },
+      "coordination": {
+        "untagged": "Diese Sitzung ist keinem Projekt zugeordnet.",
+        "untagged_hint": "Ordne sie über das Sitzungsmenü → Projekt zu, um hier andere Sitzungen, Kollisionen und Arbeit am selben Projekt zu sehen.",
+        "loading": "Projekt wird geladen…",
+        "error": "Das Projektpanel konnte nicht geladen werden.",
+        "sessions": "Sitzungen",
+        "coordinator": "Koordinator",
+        "collisions": "Kollisionen",
+        "same_file": "Gleiche Datei",
+        "same_worktree": "Gleicher Worktree",
+        "work": "Arbeit",
+        "error_hint": "Es wird automatisch erneut versucht.",
+        "no_sessions": "Keine aktiven Sitzungen"
       }
     },
     "chatPage": {
