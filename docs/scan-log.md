@@ -586,3 +586,83 @@ panel GO (GPT PASS, Opus PASS, First-Principles/Design/UX CONCERNS — non-block
 Both gates GO. Documented follow-ups (not this gate): loading skeleton, an inline
 tag-CTA on the untagged empty state, the manually-synced ViewKind membership
 tables, and the focus-return poll burst. The user merges.
+
+---
+
+## Tag-refresh fix — `afterTagWrite` invalidates `['chat-slots']` — NO-GO (2026-09-16)
+
+Scope: `92a5758d4..5bc033cb3` (fix) + `92294ac4f` (cov80 stub) — `SessionActionsMenu.tsx`
+(+8 lines, 2 logic) + `SessionActionsMenu.tagRefresh.test.tsx` (new) + `.cov80.test.tsx`
+(submenu stub). The change intended to make tag/untag reflect immediately (Coordination
+tab appear on tag, clear on untag) — the bug hit driving the pod.
+
+**Gate: NO-GO.** Two of three crew axes blocked, converging on the same source-verified
+finding; the third (Tests) is GO with Nits.
+
+| Axis | Verdict | Finding |
+|---|---|---|
+| Correctness | NO-GO (2 HIGH) | The added `invalidateQueries(['chat-slots'])` targets the wrong data source. `currentSlot` = `slots.find(...)` where `slots = useAppSelector(s => s.dashboard.slots)` (Redux), NOT a react-query cache. There is NO mounted `useQuery({queryKey:['chat-slots']})` observer anywhere — the only `['chat-slots']` reader is a one-shot `fetchQuery` (gcTime:0) in a rename-recovery path. Invalidating a key with no observer and no cache→Redux bridge is a **no-op** for `currentSlot`. The comment's causal claim is false. |
+| Docs-honesty | NO-GO (1 BLOCKER, 1 HIGH) | Same finding: the code comment + commit message + test docstring all assert `invalidateQueries(['chat-slots'])` refreshes `currentSlot.project_group_id` and flips the withhold guard — a mechanism the wiring does not implement. Overclaims causation. |
+| Tests | GO (2 Nits) | Mutation-proven the regression test is NOT tautological (stripping the line fails both `it()` blocks); the cov80 submenu stub is a legitimate crash fix. But the tests assert the invalidation CALL, not the observable behavior (tab visibility / `currentSlot.project_group_id`), so they cannot detect that the fix is a no-op. |
+
+**Self-verified at source (not trusting the crew blindly):**
+- `ChatPage.tsx:517` `slots = useAppSelector(s => s.dashboard.slots)`; `:2985`
+  `currentSlot = slots.find(...)` — pure Redux.
+- Zero `useQuery({queryKey:['chat-slots']})` in `website/src` (grep, 0 matches).
+- Backend `api_chat_slot_project_group` (`chat_folders.py:1637`) calls
+  `state.push_slots_update()` at `:1863` after writing `slot.project_group_id`;
+  client consumes the `'slots'` WS frame at `useWebSocket.ts:1400` →
+  `dispatch(sseSlots(...))` → `dashboard.slots` → `currentSlot`. The SSE path the
+  diff distrusts IS the working mechanism, and the serializer DOES emit
+  `project_group_id` (`slot_projection.py:315`, `state.py:2047`).
+
+**Conclusion:** the earlier "root cause = missing `['chat-slots']` invalidation"
+diagnosis (from code reading, not a reproduction) was WRONG. The committed fix is
+misdirected — either a harmless no-op that did not fix the pod symptom, or the real
+failing link is elsewhere (SSE frame dedup at `useWebSocket.ts:1393-1396`, a
+serializer gap, or the withhold guard's source) and remains undiagnosed. Per the
+failed-twice / diagnose-don't-patch rule, NOT committing another speculative fix.
+Next step is to REPRODUCE the pod symptom against a running instance and identify the
+true failing link before any further change. `5bc033cb3`/`92294ac4f` remain on the
+branch (backup `backup/tag-refresh-fix`), NOT merged.
+
+**Multimodel panel: not run** — the crew NO-GO on a source-verified no-op fix makes a
+panel run premature; re-gate both after the real cause is found.
+
+---
+
+## Coordination panel discoverability — always-visible tab + untagged on-ramp — GO (2026-09-16)
+
+Head SHA `963dec35e` (branch `feature/project-group-shared-memory`). Commits:
+`194c0ebd7` (remove withhold-when-untagged; always offer the Coordination tab; add
+`CoordinationEmptyState` on-ramp; feature-map row per its maintenance contract),
+`a55556c30` (fix: on-ramp offers pick-existing not just create), `963dec35e`
+(polish: FolderGit2 icon parity + list scroll + F2/F3 tests). Frontend-only
+(TS/React + i18n JSON + one doc line); no Python, IaC, deps/lockfile, or secrets.
+
+- **ASH: GO** — 7/7 scanners, 0 findings (scan `a60ae10f`; diff adds no deps).
+- **Holmes: not run** — frontend-only diff, no regex/secrets/IaC (same rationale as
+  the prior panel gates; §12.6 backend already cleared Holmes).
+- **Crew round 1 (`194c0ebd7`): NO-GO** — Correctness GO, Tests GO (2 Low: untested
+  error branch F1, untested isPending F2), Docs-honesty GO (every feature-map cell +
+  code comment verified against source), **UX NO-GO (High)**: the on-ramp CTA only
+  *created* a project, so a user meaning to *join* an existing group made a duplicate
+  name-colliding group of one.
+- **Crew round 2 (`a55556c30`, after fix): GO** — UX confirmed the High **CLEARED**
+  (on-ramp now offers pick-existing by id alongside create); Correctness GO (union
+  dispatch correct, undefined-loading renders [], both paths disabled during
+  isPending); Tests GO (pick-vs-create pinned with the load-bearing negative
+  assertion; F1 error branch non-tautological). Remaining: UX Medium (icon parity)
+  + Lows, Tests F2/F3 nits — all addressed in `963dec35e`.
+- **Multimodel panel (`a55556c30`): GO** — GPT PASS + Opus PASS (both high-bar lanes);
+  First-Principles CONCERNS (subtraction: delete the on-ramp — declined, it is the
+  discoverability feature the user chose) and UX CONCERNS (window.prompt is a jarring/
+  inaccessible create affordance — recorded as a follow-up, non-blocking). Report:
+  `docs/scan-log-multimodel.md`.
+- **`963dec35e`**: cosmetic icon/scroll + added F2/F3 tests only (no behavioral change);
+  gate not re-run per the tests/comments-only manual-round exception. Build + tsc clean,
+  27 frontend tests green.
+
+**Paired verdict @ `963dec35e`: crew GO | panel GO.** Both gates GO. Open follow-up
+(non-blocking): replace the create-name `window.prompt` with an inline input (UX lane
+on both crew and panel flagged it).
