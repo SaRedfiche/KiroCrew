@@ -245,6 +245,8 @@ describe('CoordinationEmptyState (untagged on-ramp)', () => {
     // The join list appears, each existing project is a pick button, and the
     // create button relabels to "New project…" so create is not the only path.
     expect(await screen.findByText(i18nT('components.coordinationPanel.join_existing'))).toBeInTheDocument()
+    // F3: every project renders its own pick button.
+    expect(screen.getByRole('button', { name: 'other' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'aidlc-migration' }))
     // Pick-existing tags by id — NOT a duplicate create-by-name.
     await waitFor(() =>
@@ -281,6 +283,20 @@ describe('CoordinationEmptyState (untagged on-ramp)', () => {
     renderCta('sess-x')
     fireEvent.click(await screen.findByRole('button', { name: i18nT('components.coordinationPanel.tag_cta') }))
     expect(await screen.findByText('boom')).toBeInTheDocument()
+    promptSpy.mockRestore()
+  })
+
+  it('disables the CTA and shows the tagging label while the write is in flight', async () => {
+    // F2: the isPending branch. A deferred promise holds the mutation open so
+    // the in-flight render (disabled button + "Tagging…" label) is observable.
+    let resolve!: () => void
+    mockApi.setSlotProjectGroup.mockReturnValue(new Promise<void>(r => { resolve = () => r() }))
+    const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('aidlc-migration')
+    renderCta('sess-x')
+    fireEvent.click(await screen.findByRole('button', { name: i18nT('components.coordinationPanel.tag_cta') }))
+    const pending = await screen.findByRole('button', { name: i18nT('components.coordinationPanel.tagging') })
+    expect(pending).toBeDisabled()
+    resolve()
     promptSpy.mockRestore()
   })
 })

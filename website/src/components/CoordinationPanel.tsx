@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Users, AlertTriangle, RefreshCw, FolderPlus } from 'lucide-react'
+import { Users, AlertTriangle, RefreshCw, FolderPlus, FolderGit2 } from 'lucide-react'
 import { api } from '../api/client'
 import DetailPanel from './DetailPanel'
 import ErrorNotice from './ErrorNotice'
@@ -268,7 +268,7 @@ export function CoordinationEmptyState({ slotKey }: CoordinationEmptyStateProps)
 
       {/* Pick an EXISTING project — the join case. Only when some exist. */}
       {projects.length > 0 && (
-        <div className="flex flex-col items-stretch gap-1 w-full max-w-[240px]">
+        <div className="flex flex-col items-stretch gap-1 w-full max-w-[240px] max-h-[200px] overflow-y-auto">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-muted text-left">
             {i18nT('components.coordinationPanel.join_existing')}
           </span>
@@ -280,7 +280,7 @@ export function CoordinationEmptyState({ slotKey }: CoordinationEmptyStateProps)
               title={p.name}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] cursor-pointer transition-colors text-text hover:bg-bg-hover bg-transparent border border-border disabled:opacity-50 disabled:cursor-default"
             >
-              <Users size={12} className="shrink-0 text-accent" />
+              <FolderGit2 size={12} className="shrink-0 text-accent" />
               <span className="truncate text-left flex-1">{p.name}</span>
             </button>
           ))}
