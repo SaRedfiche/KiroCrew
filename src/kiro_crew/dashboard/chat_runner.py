@@ -2614,8 +2614,9 @@ async def _flush_collision_writes(state: Any, slot: "_ChatSlot", session: str) -
 
 def _collision_notification_payload(*, project_group_id: str, signal: str, session_count: int):
     """Build the collision NotificationPayload — opaque project id only, plain
-    body, links to the project panel. Kept tiny and import-local so chat_runner
-    does not hard-depend on the notifications package at module load."""
+    self-contained body with no URL/click-through (no panel UI page this phase).
+    Kept tiny and import-local so chat_runner does not hard-depend on the
+    notifications package at module load."""
     from kiro_crew.dashboard.collision_notify import notification_body
     from kiro_crew.notifications.bus import NotificationPayload
 

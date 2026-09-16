@@ -136,8 +136,10 @@ class GroupMemoryStore:
         * the HTTP read handler catches ``OSError`` and returns 503
           ``read_failed`` — an unreadable blob is a real failure, NOT a truthful
           "empty", so it must not be reported as HTTP 200 empty;
-        * ``append`` reads directly (not via this method) under the lock so a
-          transient unreadable blob is never treated as empty and overwritten.
+        * ``append`` uses this method (under the lock) and RELIES on the
+          propagate-on-unreadable behaviour: a transient unreadable blob raises
+          rather than reading as empty, so append never overwrites prior memory
+          with just the new entry.
 
         Reporting an unreadable file as ``""`` here would be a status-reporting
         artefact (the read handler would 200-with-empty a genuine failure); the

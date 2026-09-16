@@ -17,7 +17,8 @@ would mute it within a day. So:
 * The notification body carries an **opaque project id, never the project
   name** — notifications persist to the agent-readable, unscoped
   ``notifications.jsonl``, so the name (and even "project X had a collision")
-  would leak cross-project. The client resolves id->name at display time.
+  would leak cross-project. A reader resolves the opaque id to a name out of
+  band; the body itself carries no name and no click-through.
 
 This module is pure decision + dedupe state; it does not call
 ``send_notification`` (the caller does, with the returned body). Thread-safe.
