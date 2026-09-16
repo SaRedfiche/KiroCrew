@@ -466,6 +466,11 @@ _STRICT_INTERNAL_API_PATHS = frozenset(
         # the tools' internal-secret calls fall through to cookie auth and are
         # refused before the handler's own session recognition can run.
         "/api/work-ledger",
+        # MCP-only (group_memory_read / group_memory_write on kirocrew-dashboard);
+        # no browser caller. Same wiring class as "/api/work-ledger": without
+        # this entry the tools' internal-secret calls fall through to cookie auth
+        # and are refused before the handler's own session recognition runs.
+        "/api/group-memory",
         # MCP-only (knowledge_add_document tool); no browser caller — the
         # dashboard ingests via its own cookie-authed knowledge routes. Same
         # wiring class as "/api/notifications/agent" above.
@@ -1488,6 +1493,26 @@ def _deferred_work_ledger(handler_name: str) -> Callable:
     return _route
 
 
+def _deferred_group_memory(handler_name: str) -> Callable:
+    """Bind a group-memory route without importing the handler at boot.
+
+    Same shape and reason as :func:`_deferred_work_ledger`: the two
+    group-memory tools live on the opt-in ``kirocrew-dashboard`` server, so a
+    session that is not tagged into a project group never pays to load the
+    handler (which pulls in ``group_memory`` + ``work_ledger``). Route
+    registration is allowed at boot; only the import moves to first request.
+    """
+
+    async def _route(request: web.Request) -> web.StreamResponse:
+        from kiro_crew.dashboard.handlers import group_memory
+
+        handler = getattr(group_memory, handler_name)
+        return await handler(request)
+
+    _route.__name__ = handler_name
+    return _route
+
+
 def _register_mcp_routes(app: web.Application) -> None:
     """Register API routes used by MCP tools (spawn, lessons, crons, etc.)."""
     app.router.add_post("/api/spawn", handlers.api_spawn)
@@ -1512,6 +1537,8 @@ def _register_mcp_routes(app: web.Application) -> None:
     app.router.add_post("/api/work-ledger/record", _deferred_work_ledger("api_work_ledger_record"))
     app.router.add_get("/api/work-ledger/brief", _deferred_work_ledger("api_work_brief"))
     app.router.add_post("/api/work-ledger/report", _deferred_work_ledger("api_work_report"))
+    app.router.add_get("/api/group-memory", _deferred_group_memory("api_group_memory_get"))
+    app.router.add_post("/api/group-memory", _deferred_group_memory("api_group_memory_write"))
     app.router.add_get("/api/crons", handlers.api_crons)
     app.router.add_post("/api/crons", handlers.api_crons_create)
     app.router.add_delete("/api/crons", handlers.api_cron_batch_delete)

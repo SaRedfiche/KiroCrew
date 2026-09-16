@@ -28,6 +28,7 @@ from kiro_crew.config import live
 from kiro_crew.config.loader import KiroCrewConfig, workspace_dir_for
 from kiro_crew.config.paths import kiro_agents_dir
 from kiro_crew.cron import get_local_tz
+from kiro_crew.group_memory import GroupMemoryError, GroupMemoryStore
 from kiro_crew.hooks import (
     HOOK_INJECT_CONTEXT,
     HOOK_MODIFY,
@@ -1055,6 +1056,7 @@ def _budget(fraction: float) -> int:
 _HISTORY_BUDGET_CHARS = _budget(0.21)  # thread history (fallback/truncated)  = 21%
 _MEMORY_PREFS_CAP = _budget(0.026)  # user preferences                     = 2.6%
 _MEMORY_PROJECTS_CAP = _budget(0.039)  # active projects                      = 3.9%
+_GROUP_MEMORY_CAP = _budget(0.039)  # project-group shared memory (§12.6)   = 3.9%
 _MEMORY_HISTORY_CAP = _budget(0.16)  # daily history (multi-tier decay)     = 16%
 _LESSONS_CAP = _budget(0.226)  # learned corrections (high priority)  = 22.6%
 _SEMANTIC_MEMORY_CAP = _budget(0.077)  # semantic memory (vector)             = 7.7%
@@ -1119,6 +1121,7 @@ class _ResolvedCaps:
     base: int
     prefs: int
     projects: int
+    group: int
     memory_history: int
     lessons: int
     semantic: int
@@ -1144,6 +1147,7 @@ class _ResolvedCaps:
             self.compressed_history
             + self.prefs
             + self.projects
+            + self.group
             + self.memory_history
             + self.semantic
             + self.episodic
@@ -1201,6 +1205,7 @@ def _resolve_caps_cached(window: int) -> _ResolvedCaps:
         base=base,
         prefs=_scaled(_MEMORY_PREFS_CAP),
         projects=_scaled(_MEMORY_PROJECTS_CAP),
+        group=_scaled(_GROUP_MEMORY_CAP),
         memory_history=_scaled(_MEMORY_HISTORY_CAP),
         lessons=_scaled(_LESSONS_CAP),
         semantic=_scaled(_SEMANTIC_MEMORY_CAP),
@@ -3407,6 +3412,7 @@ class ContextBuilder:
         context_groups: frozenset[str] | None = None,
         query_text: str = "",
         project: str | None = None,
+        project_group_id: str | None = None,
         member: str = "",
         _v2_essentials: str | None = None,
     ) -> str:
@@ -3880,6 +3886,38 @@ class ContextBuilder:
                 )
         _mark("memory")
 
+        # Project-group shared memory (design §12.6). A durable, human/
+        # coordinator-authored blob keyed by the session's ``project_group_id``,
+        # injected into every session tagged into the same group so project
+        # background is maintained ONCE instead of re-fed per session. Placed
+        # AFTER global memory and BEFORE session lessons: a session's own learned
+        # lessons still take precedence over shared project context. Gated by the
+        # SAME memory group + ``blocks_reads`` (temporary sessions) as the memory
+        # tier — shared project context is memory — and self-defers to "" when the
+        # session carries no group tag or the group has no memory yet (no marker,
+        # no error). Scaled by the ``group`` cap via the existing caps machinery.
+        if (
+            project_group_id
+            and not blocks_reads
+            and _group_included(context_groups, CONTEXT_GROUP_MEMORY)
+        ):
+            try:
+                group_ctx = GroupMemoryStore(project_group_id).get_context(
+                    cap=caps.group,
+                    query=query_text,
+                )
+            except GroupMemoryError:
+                # A malformed group id is a data problem, not a turn-fatal one:
+                # skip the tier rather than fail the whole context build.
+                logger.warning(
+                    "Skipping group-memory tier: unusable project_group_id=%r",
+                    project_group_id,
+                )
+                group_ctx = ""
+            if group_ctx:
+                parts.append(group_ctx + "\n\n")
+        _mark("group_memory")
+
         # Skills. Three cases, in precedence order:
         #
         # 1. The agent template maps skills via ``skill://`` resources. On the
@@ -4058,6 +4096,7 @@ class ContextBuilder:
         thread_ts: str | None = None,
         workspace: str | None = None,
         project: str | None = None,
+        project_group_id: str | None = None,
         memory_store: str | None = None,
         user_display_name: str | None = None,
         compressed_history: str | None = None,
@@ -4284,6 +4323,7 @@ class ContextBuilder:
                 context_groups=context_groups,
                 query_text=text,
                 project=project,
+                project_group_id=project_group_id,
                 member=member,
                 _v2_essentials=_essentials,
             )

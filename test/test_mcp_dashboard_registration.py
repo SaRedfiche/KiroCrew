@@ -347,7 +347,14 @@ class TestWhatThisSetGrants:
         "session_send",
         "session_read_message",
     }
-    GRANTED_TOOLS = FOLDER_TOOLS | SESSION_TOOLS
+    #: The project-group shared-memory half (design §12.6). Rides on the SAME
+    #: assignment as the folder/session halves — read is any tagged member, write
+    #: is coordinator-only, both gated server-side on the caller's own slot.
+    GROUP_MEMORY_TOOLS = {
+        "group_memory_read",
+        "group_memory_write",
+    }
+    GRANTED_TOOLS = FOLDER_TOOLS | SESSION_TOOLS | GROUP_MEMORY_TOOLS
 
     def test_the_set_is_exactly_the_folder_tools(self) -> None:
         from kiro_crew import mcp_dashboard
@@ -380,10 +387,13 @@ class TestWhatThisSetGrants:
         names = {t["name"] for t in mcp_dashboard._tool_definitions()}
         folder = {n for n in names if n.startswith("chat_folder_")}
         session = {n for n in names if n.startswith("session_")}
+        group_memory = {n for n in names if n.startswith("group_memory_")}
         assert folder, "the folder-organization tools left this set"
         assert session, "the session-control tools left this set"
+        assert group_memory, "the group-memory tools left this set"
         # Nothing else rides along unannounced.
-        assert names == folder | session, (
-            f"{sorted(names - folder - session)} is neither folder organization nor "
-            "session control — name the class it belongs to before adding it here"
+        assert names == folder | session | group_memory, (
+            f"{sorted(names - folder - session - group_memory)} is not folder "
+            "organization, session control, or group memory — name the class it "
+            "belongs to before adding it here"
         )

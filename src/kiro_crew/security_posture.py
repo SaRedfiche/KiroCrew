@@ -1331,6 +1331,17 @@ _REDACTION_SINKS: tuple[tuple[str, str, str], ...] = (
         "preference is not one the client can use, and the sync loop would "
         "write the sentinel back over the file.",
     ),
+    (
+        "Project-group shared memory reads",
+        "dashboard/handlers/group_memory.py",
+        "The stored project-group shared memory served by `GET /api/group-memory` "
+        "behind the `group_memory_read` tool. The blob is human/coordinator-authored "
+        "and re-injected into every tagged session's context, so a credential or "
+        "exfiltration URL a coordinator pasted into it would otherwise reach the "
+        "model verbatim on every read. The read handler runs the platform-aware "
+        "redaction chain on the text before the response leaves the backend, "
+        "matching the work-ledger read boundary.",
+    ),
 )
 
 # Modules that call a redactor but are NOT an output egress boundary, so they do

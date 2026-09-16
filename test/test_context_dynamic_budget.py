@@ -98,6 +98,7 @@ def test_global_ceiling_is_sum_of_scaled_section_caps():
         caps.compressed_history
         + caps.prefs
         + caps.projects
+        + caps.group
         + caps.memory_history
         + caps.semantic
         + caps.episodic
