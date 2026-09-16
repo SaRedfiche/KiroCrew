@@ -1872,6 +1872,8 @@ class TestAdvertisedSet:
             "session_close",
             "session_send",
             "session_read_message",
+            "group_memory_read",
+            "group_memory_write",
         }
 
 
