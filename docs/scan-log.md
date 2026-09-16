@@ -464,7 +464,9 @@ green). Both review gates GO. Final head: `b9f2d3e25`.
 The Phase-3 §12.6 feature on top of the (rebased) peer-coordination stack:
 `GroupMemoryStore` (per-group markdown blob under `data_home()/group-memory/<id>`,
 path-traversal-guarded, atomic writes under a per-group advisory flock, locked
-append with a total-blob cap, read degrades to `""` on any OSError); the injection
+append with a total-blob cap, `read()` swallows only FileNotFound/NotADir and
+propagates other OSError so the HTTP read handler 503s and the tier self-defers);
+the injection
 tier in `context.py` (between global memory and session lessons, window-scaled
 `caps.group`, self-defers on no-tag/no-memory/malformed-id/unreadable); two MCP
 tools on `kirocrew-dashboard` (`group_memory_read` = any tagged member,

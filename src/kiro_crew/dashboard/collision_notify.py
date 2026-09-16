@@ -149,5 +149,5 @@ def notification_body(*, project_group_id: str, signal: str, session_count: int)
     n = max(session_count, 2)  # a collision is >= 2 by definition
     return (
         f"Project coordination: {n} {what}. "
-        f"In project {project_group_id}. Open the project panel for details."
+        f"In project {project_group_id}."
     )

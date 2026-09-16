@@ -1,7 +1,7 @@
 """Project panel read endpoint — the browse view for project coordination (§4.4).
 
 ``GET /api/projects/{id}/panel`` returns a per-project snapshot the dashboard
-renders: the project record (name, repos), every LIVE session tagged with the
+renders: the project record (name), every LIVE session tagged with the
 project (title, agent, current branch), and the collision flags (same-file +
 same-worktree). Read-only; the frontend view is a later, separate piece — this
 is the backend JSON it consumes.
@@ -216,9 +216,7 @@ async def api_projects_coordination_list(request: web.Request) -> web.Response:
     The tagging UI's "pick an existing project" source. Deliberately NOT
     ``/api/projects`` (taken by the task-runner's unrelated project concept) —
     this is the ``ProjectStore`` record table. The response carries only
-    ``{id, name}`` per record: the pick-list renders the name and tags by id,
-    and a list-scoped ``repos`` rollup would be dead weight (the per-project
-    ``repos`` view lives on the panel route).
+    ``{id, name}`` per record: the pick-list renders the name and tags by id.
 
     App-ownership mirrors the panel (App Kit §5.2): the dashboard user (no app
     claim) sees every project; an APP caller sees ONLY the projects it owns a

@@ -4077,9 +4077,11 @@ class ContextBuilder:
             except (GroupMemoryError, OSError):
                 # A malformed group id or an unreadable blob is a data problem,
                 # not a turn-fatal one: skip the tier rather than fail the whole
-                # context build. (read() already degrades OSError to ""; this is
-                # defense-in-depth so no future get_context change can crash a
-                # tagged session's turn on a bad shared-memory file.)
+                # context build. read() swallows only FileNotFound/NotADir, so a
+                # PermissionError / I/O error PROPAGATES here — this except is
+                # what turns that into "no group tier this turn" (the HTTP read
+                # handler makes the opposite choice and 503s; the tier is
+                # best-effort, so it degrades).
                 logger.warning(
                     "Skipping group-memory tier: unusable project_group_id=%r",
                     project_group_id,

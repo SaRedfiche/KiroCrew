@@ -2629,7 +2629,6 @@ def _collision_notification_payload(*, project_group_id: str, signal: str, sessi
             session_count=session_count,
         ),
         priority="default",
-        url="/projects",
         group_key=f"collision:{project_group_id}",
     )
 
