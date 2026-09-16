@@ -74,6 +74,13 @@ describe('CoordinationPanel', () => {
     // resolved from the session set, joined on one line.
     expect(screen.getByText(i18nT('components.coordinationPanel.same_worktree'))).toBeInTheDocument()
     expect(screen.getByText('Worker A, Worker B')).toBeInTheDocument()
+
+    // Header count pills use i18next plurals: 3 sessions is plural, 1 collision
+    // is singular (the fix for a "1 collisions" copy bug).
+    expect(screen.getByText(i18nT('components.coordinationPanel.session_count', { count: 3 }))).toBeInTheDocument()
+    expect(screen.getByText(i18nT('components.coordinationPanel.collision_count', { count: 1 }))).toBeInTheDocument()
+    expect(i18nT('components.coordinationPanel.collision_count', { count: 1 })).toBe('1 collision')
+    expect(i18nT('components.coordinationPanel.session_count', { count: 3 })).toBe('3 sessions')
   })
 
   it('orders the sections header -> members -> work -> collisions', async () => {

@@ -3170,8 +3170,10 @@
     "coordinationPanel": {
       "title": "Coordination",
       "loading": "Loading…",
-      "session_count": "{{count}} sessions",
-      "collision_count": "{{count}} collisions",
+      "session_count_one": "{{count}} session",
+      "session_count_other": "{{count}} sessions",
+      "collision_count_one": "{{count}} collision",
+      "collision_count_other": "{{count}} collisions",
       "refresh": "Refresh",
       "load_failed": "Couldn’t load this project’s coordination view.",
       "members": "Members",
