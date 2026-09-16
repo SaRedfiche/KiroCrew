@@ -497,8 +497,9 @@ rewritten on `contested_files`.
 **Design/UX CONCERNS (accepted follow-ups, not this gate):** `prompt()` for
 project creation (documented Phase-4 inline-input replacement); the `bus.push`
 notify sharing the flush failure domain with the panel flags (accepted Phase-1
-risk, revisit trigger = coordinator dispatch threshold); the notify body's
-"Open the project panel" pointing at a route with no UI page yet.
+risk, revisit trigger = coordinator dispatch threshold). The earlier "Open the
+project panel" body text + dead `/projects` deep link were REMOVED (the notify is
+now self-contained), since no panel UI page exists this phase.
 
 
 **Paired verdict @ crew+panel-reviewed `57febe74e`/`1fb07eb19` → fixes on `1fb07eb19` (+ this round):**

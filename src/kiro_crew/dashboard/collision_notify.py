@@ -139,7 +139,9 @@ def sameworktree_should_notify(
 def notification_body(*, project_group_id: str, signal: str, session_count: int) -> str:
     """The notification body — OPAQUE project id, never the name, and no file
     path or worktree path (those persist to the unscoped notifications.jsonl).
-    Plain text. The client resolves id->name and links to the panel for detail.
+    Plain text, self-contained: it carries no click-through, because the
+    coordination panel is a JSON read route with no frontend page yet (the panel
+    UI is a later phase). The id is resolvable via the panel/coordination routes.
     """
     what = (
         "sessions are working the same worktree (live filesystem race)"
