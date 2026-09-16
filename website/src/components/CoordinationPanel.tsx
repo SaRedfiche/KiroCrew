@@ -9,7 +9,7 @@ import type { ProjectPanelWorkItem } from '../types'
 
 /** Theme class for a work item's state. */
 function stateClass(state: string): string {
-  switch (state) {
+  switch (state.toLowerCase()) {
     case 'accepted':
       return 'bg-ok/15 text-ok'
     case 'rejected':
@@ -33,7 +33,7 @@ interface CoordinationPanelProps {
 }
 
 export default function CoordinationPanel({ projectGroupId, onClose }: CoordinationPanelProps) {
-  const { data, refetch, isLoading, error } = useQuery({
+  const { data, refetch, isLoading, isFetching, error } = useQuery({
     queryKey: ['project-panel', projectGroupId],
     queryFn: () => api.getProjectPanel(projectGroupId),
     enabled: !!projectGroupId,
@@ -61,7 +61,7 @@ export default function CoordinationPanel({ projectGroupId, onClose }: Coordinat
         <div className="flex items-center gap-2 h-[38px] px-3 shrink-0 border-b border-border">
           <Users size={14} className="text-accent shrink-0" />
           <span className="text-[12px] font-medium text-text truncate">
-            {data?.project.name || i18nT('components.coordinationPanel.loading')}
+            {data?.project?.name || i18nT('components.coordinationPanel.loading')}
           </span>
           {sessions.length > 0 && (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-hover text-muted font-mono shrink-0">
@@ -76,11 +76,12 @@ export default function CoordinationPanel({ projectGroupId, onClose }: Coordinat
           <span className="flex-1" />
           <button
             onClick={() => refetch()}
-            className="flex items-center justify-center w-[26px] h-[26px] rounded-md cursor-pointer transition-colors text-muted hover:text-text hover:bg-bg-hover bg-transparent border-none"
+            disabled={isFetching}
+            className="flex items-center justify-center w-[26px] h-[26px] rounded-md cursor-pointer transition-colors text-muted hover:text-text hover:bg-bg-hover bg-transparent border-none disabled:opacity-50 disabled:cursor-default"
             title={i18nT('components.coordinationPanel.refresh')}
             aria-label={i18nT('components.coordinationPanel.refresh')}
           >
-            <RefreshCw size={13} />
+            <RefreshCw size={13} className={isFetching ? 'animate-spin' : undefined} />
           </button>
         </div>
       }
@@ -98,7 +99,7 @@ export default function CoordinationPanel({ projectGroupId, onClose }: Coordinat
         )}
 
         {/* ── MEMBERS section ── */}
-        {sessions.length > 0 && (
+        {!error && sessions.length > 0 && (
           <section className="py-2">
             <div className="px-3 pb-1.5 flex items-center gap-1.5">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">
@@ -110,16 +111,15 @@ export default function CoordinationPanel({ projectGroupId, onClose }: Coordinat
               {sessions.map(s => (
                 <div
                   key={s.session}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover transition-colors"
+                  className="w-full flex items-center gap-2 px-3 py-1.5 min-w-0 hover:bg-bg-hover transition-colors"
                   title={s.session}
                 >
-                  <span className="truncate text-text">{s.title || s.session}</span>
+                  <span className="truncate text-text flex-1 min-w-0">{s.title || s.session}</span>
                   {s.is_coordinator && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/15 text-accent shrink-0 capitalize">
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/15 text-accent shrink-0">
                       {i18nT('components.coordinationPanel.coordinator')}
                     </span>
                   )}
-                  <span className="flex-1" />
                   {s.agent && <span className="text-[11px] text-muted shrink-0">{s.agent}</span>}
                   {s.branch && (
                     <span className="font-mono text-[11px] text-muted shrink-0 truncate max-w-[40%]">{s.branch}</span>
@@ -131,7 +131,7 @@ export default function CoordinationPanel({ projectGroupId, onClose }: Coordinat
         )}
 
         {/* ── WORK section (the prominent one) ── */}
-        {work.length > 0 && (
+        {!error && work.length > 0 && (
           <section className="py-2 border-t border-border">
             <div className="px-3 pb-1.5 flex items-center gap-1.5">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">
@@ -144,7 +144,7 @@ export default function CoordinationPanel({ projectGroupId, onClose }: Coordinat
                 <div key={w.item_id} className="px-3 py-1.5 hover:bg-bg-hover transition-colors">
                   <div className="flex items-center gap-2">
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0 capitalize ${stateClass(w.state)}`}>
-                      {w.state}
+                      {w.state.toLowerCase()}
                     </span>
                     <span className="truncate text-text flex-1">{w.title || i18nT('components.coordinationPanel.untitled_item')}</span>
                     {w.pr != null && (
@@ -163,7 +163,7 @@ export default function CoordinationPanel({ projectGroupId, onClose }: Coordinat
         )}
 
         {/* ── COLLISIONS section (exception footer, bottom) ── */}
-        {collisions.length > 0 && (
+        {!error && collisions.length > 0 && (
           <section className="py-2 border-t border-border">
             <div className="px-3 pb-1.5">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">
@@ -183,7 +183,7 @@ export default function CoordinationPanel({ projectGroupId, onClose }: Coordinat
                         <span className="font-mono text-[11px] text-muted ml-1.5 break-all">{c.repo_rel_path}</span>
                       )}
                     </div>
-                    <div className="text-[11px] text-muted truncate">
+                    <div className="text-[11px] text-muted break-words">
                       {c.sessions.map(k => label(k, titles)).join(', ')}
                     </div>
                   </div>

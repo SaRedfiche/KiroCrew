@@ -41,24 +41,25 @@ globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} 
 import SidePanel, { newMenuSections, NEW_MENU_LABEL_KEY } from '../pages/chat/SidePanel'
 import { usePanelTabs } from '../hooks/usePanelTabs'
 
-function Harness() {
+function Harness({ projectGroupId }: { projectGroupId?: string }) {
   const tabsCtl = usePanelTabs('slot-a')
   return (
     <SidePanel
       tabsCtl={tabsCtl}
       slot="slot-a"
+      projectGroupId={projectGroupId}
       onFileSave={async () => {}}
       onClose={() => {}}
     />
   )
 }
 
-function renderPanel() {
+function renderPanel(projectGroupId?: string) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
       <Provider store={createTestStore()}>
-        <Harness />
+        <Harness projectGroupId={projectGroupId} />
       </Provider>
     </QueryClientProvider>,
   )
@@ -88,6 +89,16 @@ describe('side panel + menu (shadcn dropdown)', () => {
     // Diagnostics are behind Developer Mode, which this harness has off.
     expect(screen.queryByRole('menuitem', { name: 'Logs' })).toBeNull()
     expect(screen.queryByRole('menuitem', { name: 'Context breakdown' })).toBeNull()
+    // Coordination is withheld when the session is not tagged into a project
+    // group (this harness passes no projectGroupId) — otherwise it would be a
+    // dead-end entry, the same rule Summary follows.
+    expect(screen.queryByRole('menuitem', { name: 'Coordination' })).toBeNull()
+  })
+
+  it('offers Coordination once the session is tagged into a project group', () => {
+    renderPanel('grp-1')
+    openMenu()
+    expect(screen.getByRole('menuitem', { name: 'Coordination' })).toBeTruthy()
   })
 
   it('opens the picked view as a tab', () => {
