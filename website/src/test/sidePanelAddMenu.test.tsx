@@ -89,13 +89,14 @@ describe('side panel + menu (shadcn dropdown)', () => {
     // Diagnostics are behind Developer Mode, which this harness has off.
     expect(screen.queryByRole('menuitem', { name: 'Logs' })).toBeNull()
     expect(screen.queryByRole('menuitem', { name: 'Context breakdown' })).toBeNull()
-    // Coordination is withheld when the session is not tagged into a project
-    // group (this harness passes no projectGroupId) — otherwise it would be a
-    // dead-end entry, the same rule Summary follows.
-    expect(screen.queryByRole('menuitem', { name: 'Coordination' })).toBeNull()
+    // Coordination is ALWAYS offered, even when the session is not tagged into
+    // a project group (this harness passes no projectGroupId): opening it shows
+    // the on-ramp CTA that tags the session in one click. Withholding it hid the
+    // feature from anyone who had not already found the tagging path.
+    expect(screen.getByRole('menuitem', { name: 'Coordination' })).toBeTruthy()
   })
 
-  it('offers Coordination once the session is tagged into a project group', () => {
+  it('offers Coordination when the session is tagged into a project group', () => {
     renderPanel('grp-1')
     openMenu()
     expect(screen.getByRole('menuitem', { name: 'Coordination' })).toBeTruthy()

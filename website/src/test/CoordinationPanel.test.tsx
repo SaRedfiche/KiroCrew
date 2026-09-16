@@ -1,15 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ProjectPanel } from '../types'
 import { i18nT } from '../i18n/t'
 
 const mockApi = vi.hoisted(() => ({
   getProjectPanel: vi.fn(),
+  setSlotProjectGroup: vi.fn(),
 }))
 vi.mock('../api/client', () => ({ api: mockApi }))
 
-import CoordinationPanel from '../components/CoordinationPanel'
+import CoordinationPanel, { CoordinationEmptyState } from '../components/CoordinationPanel'
 
 /** A populated snapshot: a coordinator + two workers, two work items (one with a
  *  PR, one open), and a same-worktree collision between the two workers. */
@@ -45,6 +46,8 @@ function renderPanel(id = 'grp-1', onClose = vi.fn()) {
 beforeEach(() => {
   mockApi.getProjectPanel.mockReset()
   mockApi.getProjectPanel.mockResolvedValue(panel)
+  mockApi.setSlotProjectGroup.mockReset()
+  mockApi.setSlotProjectGroup.mockResolvedValue({} as never)
 })
 
 describe('CoordinationPanel', () => {
@@ -205,5 +208,47 @@ describe('CoordinationPanel', () => {
     renderPanel()
     expect(await screen.findByText(i18nT('components.coordinationPanel.load_failed_short'))).toBeInTheDocument()
     expect(screen.queryByText(i18nT('components.coordinationPanel.loading'))).toBeNull()
+  })
+})
+
+describe('CoordinationEmptyState (untagged on-ramp)', () => {
+  function renderCta(slotKey = 'sess-x') {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    return {
+      client,
+      ...render(
+        <QueryClientProvider client={client}>
+          <CoordinationEmptyState slotKey={slotKey} />
+        </QueryClientProvider>,
+      ),
+    }
+  }
+
+  it('shows the discovery teaser AND a one-click tag CTA', () => {
+    renderCta()
+    // The dead-end copy is now paired with an action, so an untagged user both
+    // learns the feature exists and can turn it on without hunting the ⋯ menu.
+    expect(screen.getByText(i18nT('components.coordinationPanel.no_project'))).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: i18nT('components.coordinationPanel.tag_cta') })).toBeTruthy()
+  })
+
+  it('tags the session into a new project when the CTA is used', async () => {
+    const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('  aidlc-migration  ')
+    renderCta('sess-x')
+    fireEvent.click(screen.getByRole('button', { name: i18nT('components.coordinationPanel.tag_cta') }))
+    // Trimmed name, correct slot, create-by-name shape — the same tag API the
+    // ⋯-menu path uses.
+    await waitFor(() =>
+      expect(mockApi.setSlotProjectGroup).toHaveBeenCalledWith('sess-x', { name: 'aidlc-migration' }),
+    )
+    promptSpy.mockRestore()
+  })
+
+  it('does nothing on a blank/cancelled prompt', () => {
+    const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('   ')
+    renderCta()
+    fireEvent.click(screen.getByRole('button', { name: i18nT('components.coordinationPanel.tag_cta') }))
+    expect(mockApi.setSlotProjectGroup).not.toHaveBeenCalled()
+    promptSpy.mockRestore()
   })
 })

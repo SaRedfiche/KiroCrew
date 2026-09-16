@@ -1,5 +1,5 @@
-import { useQuery } from '@tanstack/react-query'
-import { Users, AlertTriangle, RefreshCw } from 'lucide-react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Users, AlertTriangle, RefreshCw, FolderPlus } from 'lucide-react'
 import { api } from '../api/client'
 import DetailPanel from './DetailPanel'
 import ErrorNotice from './ErrorNotice'
@@ -204,5 +204,62 @@ export default function CoordinationPanel({ projectGroupId, onClose }: Coordinat
         )}
       </div>
     </DetailPanel>
+  )
+}
+
+interface CoordinationEmptyStateProps {
+  /** The slot key of the session viewing this untagged panel. */
+  slotKey: string
+}
+
+/**
+ * The untagged on-ramp. Rendered in place of the panel when the session has no
+ * project group: it is the discovery surface that tells the user the feature
+ * exists AND lets them turn it on in one click, rather than withholding the tab
+ * entirely (which hid the feature from anyone who had not already tagged).
+ *
+ * Create-and-tag is the single action: a native prompt collects a name (mirrors
+ * ProjectTagSubmenu's minimal increment), then POSTs the tag. On success the
+ * session's project_group_id lands via the slot stream and this view is
+ * replaced by the live panel. We invalidate the same keys the ⋯-menu tagging
+ * path does so the ⋯ submenu's project list and the slot list stay consistent.
+ */
+export function CoordinationEmptyState({ slotKey }: CoordinationEmptyStateProps) {
+  const queryClient = useQueryClient()
+  const tag = useMutation({
+    mutationFn: (name: string) => api.setSlotProjectGroup(slotKey, { name }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['coordination-projects'] })
+      void queryClient.invalidateQueries({ queryKey: ['chat-slots'] })
+    },
+  })
+
+  const onTag = () => {
+    const name = window.prompt(i18nT('components.coordinationPanel.tag_prompt'))
+    if (name != null && name.trim() !== '') tag.mutate(name.trim())
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-3 pt-10 px-6 text-center">
+      <Users size={22} className="text-muted" />
+      <p className="text-muted text-[13px] max-w-[240px]">
+        {i18nT('components.coordinationPanel.no_project')}
+      </p>
+      {tag.isError && (
+        <p className="text-danger text-[12px]">
+          {errMessage(tag.error) || i18nT('components.coordinationPanel.load_failed')}
+        </p>
+      )}
+      <button
+        onClick={onTag}
+        disabled={tag.isPending}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium cursor-pointer transition-colors bg-accent/15 text-accent hover:bg-accent/25 border-none disabled:opacity-50 disabled:cursor-default"
+      >
+        <FolderPlus size={13} className="shrink-0" />
+        {tag.isPending
+          ? i18nT('components.coordinationPanel.tagging')
+          : i18nT('components.coordinationPanel.tag_cta')}
+      </button>
+    </div>
   )
 }
