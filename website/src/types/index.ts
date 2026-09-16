@@ -1487,6 +1487,48 @@ export interface SubagentInfo {
   id: string; task: string; done: boolean; error?: string; result?: string
 }
 
+/** One live session tagged into a project group, as the panel route returns it.
+ *  `session` is the effective session key; `is_coordinator` is present+true only
+ *  when the session owns a work ledger. */
+export interface ProjectPanelSession {
+  session: string
+  title: string
+  agent: string
+  branch: string
+  is_coordinator?: boolean
+}
+
+/** A collision flag between sessions in the group. `repo_rel_path` is present
+ *  only for a `same-file` signal; `sessions` are effective keys of this group's
+ *  own sessions party to the collision. */
+export interface ProjectPanelCollision {
+  signal: 'same-file' | 'same-worktree'
+  repo_rel_path?: string
+  sessions: string[]
+}
+
+/** One coordinator work-ledger item rolled up for the group. `worker` is the
+ *  worker's effective key when it is a session OF THIS group, else null. */
+export interface ProjectPanelWorkItem {
+  coordinator: string
+  item_id: string
+  title: string
+  state: string
+  status: string
+  summary: string
+  pr: number | null
+  round: number
+  worker: string | null
+}
+
+/** GET /api/projects/{id}/panel — the coordination side-panel snapshot. */
+export interface ProjectPanel {
+  project: { id: string; name: string }
+  sessions: ProjectPanelSession[]
+  collisions: ProjectPanelCollision[]
+  work: ProjectPanelWorkItem[]
+}
+
 export interface SessionInfo {
   key: string; title?: string; messages: number; created?: string; modified?: number; agent?: string; memory_mode?: 'persistent' | 'incognito' | 'temporary'
 }

@@ -15,6 +15,7 @@ import type {
   PullRequestSource,
   PullRequestStatusBatch,
   PublishProviderDescriptor,
+  ProjectPanel,
   RetiredMemory,
   SessionDoc,
   SessionInventoryDetail,
@@ -4604,6 +4605,14 @@ export const api = {
    *  source for the session Project submenu. NOT `/api/projects` (that is the
    *  task-runner's unrelated project concept); this is the ProjectStore table. */
   listCoordinationProjects: () => fetch('/api/projects/coordination', { headers: { ..._sk } }).then(j),
+  /** Read one project-coordination group's live panel snapshot: the record,
+   *  every LIVE session tagged into it (with branch + coordinator flag), the
+   *  coordinator work-ledger rollup, and the collision flags (same-file /
+   *  same-worktree). `id` is the project_group_id. `_sk` so an app/restricted
+   *  caller is gated identically to the list route. 404 = unknown id or an app
+   *  that does not own the group. */
+  getProjectPanel: (id: string) =>
+    fetch('/api/projects/' + encodeURIComponent(id) + '/panel', { headers: { ..._sk } }).then(j) as Promise<ProjectPanel>,
   /** Tag a session into a project (create-or-attach-or-untag), mirroring the
    *  backend's one endpoint. Pass `{name}` to CREATE a project and attach;
    *  `{projectGroupId}` to attach to an existing one; neither to UNTAG. The
