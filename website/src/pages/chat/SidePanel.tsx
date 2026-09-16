@@ -522,18 +522,12 @@ export default function SidePanel({
   // disabled server-side and Context breakdown unless Developer Mode is on, and
   // never list the permanently pinned views (Changes / Files / Artifacts) —
   // those are always present in the strip (see the syncPinned reconcile below).
-  // Coordination has no data for a session that is not tagged into a project
-  // group — offering it would send the user to a panel that only explains it is
-  // off, the same dead end the Summary gate avoids. Withhold it (from the +
-  // menu AND any bucket tab) until the slot carries a project_group_id; the
-  // withdrawal reverses itself the moment the session is tagged.
-  const effectiveHiddenViews = useMemo(() => {
-    if (projectGroupId) return hiddenViews
-    const s = new Set<SidePanelWithholdable>(hiddenViews ?? [])
-    s.add('coordination')
-    return s
-  }, [hiddenViews, projectGroupId])
-  const menuSections = newMenuSections({ devMode, terminalEnabled, summaryEnabled, hiddenViews: effectiveHiddenViews })
+  // Coordination is ALWAYS offered, even for an untagged session: opening it on
+  // an untagged session shows the on-ramp CTA (CoordinationEmptyState) that
+  // both explains the feature and tags the session in one click. This is the
+  // discovery surface — withholding the tab until tagged hid the feature from
+  // anyone who had not already found the ⋯-menu tagging path.
+  const menuSections = newMenuSections({ devMode, terminalEnabled, summaryEnabled, hiddenViews })
   // The empty-state launcher shows the same entries flat: its two-column grid
   // has nowhere to put a separator, but it must not disagree with the menu
   // about ORDER, so it reads the groups rather than its own list.
@@ -554,19 +548,19 @@ export default function SidePanel({
   // to the leading tab — otherwise the withdrawal would hold only for a fresh
   // strip, which is not what the feature map promises.
   const isWithheld = useCallback((kind: TabKind): boolean => {
-    if (!effectiveHiddenViews) return false
-    if (kind === 'terminal') return effectiveHiddenViews.has('terminal')
-    if (kind === 'app' || isPanelTabKind(kind)) return effectiveHiddenViews.has('app')
+    if (!hiddenViews) return false
+    if (kind === 'terminal') return hiddenViews.has('terminal')
+    if (kind === 'app' || isPanelTabKind(kind)) return hiddenViews.has('app')
     // Document tabs are not views themselves but belong to one: a file, diff
     // or folder editor is opened FROM the Files view (and reads the same slot),
     // an artifact preview from Artifacts. Withholding the parent view withholds
     // its documents, or a persisted file tab would stay on the strip — and stay
     // ACTIVE — while every slot-bound view is withdrawn.
-    if (kind === 'file' || kind === 'diff' || kind === 'folder') return effectiveHiddenViews.has('files')
-    if (kind === 'artifact') return effectiveHiddenViews.has('artifacts')
-    return effectiveHiddenViews.has(kind)
-  }, [effectiveHiddenViews])
-  const visibleTabs = useMemo(() => (effectiveHiddenViews ? tabs.filter(t => !isWithheld(t.kind)) : tabs), [tabs, effectiveHiddenViews, isWithheld])
+    if (kind === 'file' || kind === 'diff' || kind === 'folder') return hiddenViews.has('files')
+    if (kind === 'artifact') return hiddenViews.has('artifacts')
+    return hiddenViews.has(kind)
+  }, [hiddenViews])
+  const visibleTabs = useMemo(() => (hiddenViews ? tabs.filter(t => !isWithheld(t.kind)) : tabs), [tabs, hiddenViews, isWithheld])
   const activeId = useMemo(() => {
     if (storedActiveId === null) return null
     if (leadingTab && storedActiveId === leadingTab.id) return storedActiveId

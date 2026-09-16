@@ -28,7 +28,7 @@ import { ContextBreakdownTab } from '../ContextBreakdownPanel'
 import SessionSummaryTab from './SessionSummaryTab'
 import { i18nT } from '../../i18n/t'
 import GitPanel from '../../components/GitPanel'
-import CoordinationPanel from '../../components/CoordinationPanel'
+import CoordinationPanel, { CoordinationEmptyState } from '../../components/CoordinationPanel'
 import { fmtDateFields } from '../../i18n/format'
 import { isModelDowngrade } from './subagentCompletion'
 import { normalizeModelKey } from '../../lib/model'
@@ -1054,9 +1054,7 @@ export default function ActivityViewer({ subagents, toolLog, open, onToggle, slo
           {projectGroupId ? (
             <CoordinationPanel projectGroupId={projectGroupId} onClose={onToggle} />
           ) : (
-            <div className="text-muted text-[13px] pt-8 px-6 text-center">
-              {i18nT('components.coordinationPanel.no_project')}
-            </div>
+            <CoordinationEmptyState slotKey={slot} />
           )}
         </div>
       )}
