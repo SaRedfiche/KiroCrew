@@ -299,9 +299,10 @@ class ProjectStore:
         garbage-collected too: ``delete_project`` is the one deterministic,
         single-owner point where a group provably goes away, so it is where the
         group-memory store is dropped. The GC runs AFTER the record is durably
-        saved and OUTSIDE the store lock — it is best-effort (``delete_group_memory``
-        swallows a bad id / missing dir and never raises), so a filesystem hiccup
-        cannot roll back or fail the record deletion the caller asked for. An
+        saved and OUTSIDE the store lock — it is best-effort: a bad id / missing
+        dir returns ``False`` and a genuine removal error PROPAGATES out of
+        ``delete_group_memory`` and is caught here, so a filesystem hiccup cannot
+        roll back or fail the record deletion the caller asked for. An
         orphaned blob left by any OTHER path (a last untag, a workspace switch)
         is tolerated exactly like the dangling tag: bounded, invisible, and
         recreated cleanly if the group re-forms.
@@ -318,7 +319,8 @@ class ProjectStore:
             removed = True
         if removed:
             # Best-effort, post-commit, lock-free: GC failure must never undo the
-            # delete. delete_group_memory is idempotent and never raises.
+            # delete. A removal error propagates from delete_group_memory and is
+            # caught here (a bad id / missing dir just returns False).
             try:
                 delete_group_memory(project_id)
             except Exception:  # pragma: no cover - GC is best-effort

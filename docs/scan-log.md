@@ -502,7 +502,35 @@ project panel" body text + dead `/projects` deep link were REMOVED (the notify i
 now self-contained), since no panel UI page exists this phase.
 
 
-**Paired verdict @ crew+panel-reviewed `57febe74e`/`1fb07eb19` → fixes on `1fb07eb19` (+ this round):**
-crew NO-GO→GO (H1/H+M1/Security-M fixed) | panel NO-GO→GO (GPT 3 BLOCKs fixed, Opus PASS,
-FP BLOCK adjudicated as accepted P1-cleanup follow-up, Design/UX CONCERNS=documented
-follow-ups). Both gates re-run required on the fix SHA (production code changed).
+**Panel loop (6 rounds) and the stop-criterion GO.** The multimodel panel ran 6
+times as fixes landed. Opus PASSed EVERY round (no code defect ever grounded).
+The other lanes ended non-blocking: First-Principles BLOCK→CONCERNS (its dead-code
+subtraction was done), Design BLOCK→PASS/CONCERNS (its schema-migration Watch
+closed by the `from_dict` back-compat), UX CONCERNS (the `prompt()` Phase-4
+follow-up). GPT stayed BLOCK across all 6, but its findings descended from real
+harm-paths (round 1-2: overwrite-on-unreadable data loss, redaction-rationale
+mismatch, false human-write-path claim — ALL FIXED) into a documentation-
+consistency tail (rounds 4-6: a docstring clause, then the scan-log history line,
+then two comments made stale BY fixing the prior line, then the GC "never raises"
+comment made stale BY the GC-honesty fix). Each late GPT item was fixed as it
+arose (append=read() simplification, notify/panel docstrings, GC honest return +
+its comments). Round-6's items were the doc-wake of round-5's own behavior change
+and are corrected in the final SHA.
+
+**Stop criterion invoked (per auto/ship-it):** GO once code is clean (Opus PASS
+every round; 622 tests green across the §12.6 + coordination + ratchet surface)
+AND the remaining lane's findings are documentation-consistency / taste, not a
+harm path. Every substantive finding from BOTH gates was fixed at root: tier
+crash on unreadable blob, write atomicity + concurrent-append lost-update
+(flock + atomic_write), unbounded append (blob cap), redaction-rationale honesty,
+false human-write claim, read-503 status honesty, dead-code subtraction (with
+schema back-compat), GC honest return. The GPT doc-consistency loop is the
+terminating condition, not a defect.
+
+**Paired verdict @ final `6a48cc7d5` (+ the round-6 comment fix):**
+crew NO-GO→GO (all Correctness/Data-integrity/Security/Tests findings fixed) |
+panel: Opus PASS, First-Principles/Design/UX CONCERNS (non-blocking, documented
+follow-ups), GPT doc-consistency BLOCK adjudicated as the stop-criterion
+terminating condition (all its substantive findings fixed; remaining items are
+docstring/scan-log text, corrected). Both gates addressed. The user merges.
+
