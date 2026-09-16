@@ -142,6 +142,9 @@ describe('CoordinationPanel', () => {
     // even if a prior poll had populated data.
     expect(screen.queryByText(i18nT('components.coordinationPanel.members'))).toBeNull()
     expect(screen.queryByText(i18nT('components.coordinationPanel.work'))).toBeNull()
+    // The header must NOT report "Loading…" for a completed failure.
+    expect(screen.queryByText(i18nT('components.coordinationPanel.loading'))).toBeNull()
+    expect(screen.getByText(i18nT('components.coordinationPanel.load_failed_short'))).toBeInTheDocument()
   })
 
   it('does not fetch when the session is not tagged into any project group', async () => {
