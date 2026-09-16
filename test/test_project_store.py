@@ -158,6 +158,51 @@ class TestDelete:
         # No session wiring passed in; delete must not require any.
         assert store.delete_project("grp-live") is True
 
+    def test_delete_gcs_group_memory(self, tmp_path, monkeypatch):
+        """§12.6 GC: deleting a project drops its project-group shared memory.
+
+        ``delete_project`` is the one deterministic single-owner point where a
+        group provably goes away, so it is where the group-memory store is
+        removed. Isolate ``data_home()`` (where group memory lives) into the
+        sandbox via KIROCREW_HOME.
+        """
+        monkeypatch.setenv("KIROCREW_HOME", str(tmp_path / "home"))
+        from kiro_crew import group_memory
+
+        store = ProjectStore(base_dir=tmp_path)
+        store.create_project("P", project_id="grp-mem")
+        group_memory.GroupMemoryStore("grp-mem").write("shared project context")
+        assert group_memory.group_dir("grp-mem").exists()
+
+        assert store.delete_project("grp-mem") is True
+        # The group's shared memory is gone with the record.
+        assert not group_memory.group_dir("grp-mem").exists()
+        assert group_memory.GroupMemoryStore("grp-mem").read() == ""
+
+    def test_delete_with_no_group_memory_is_fine(self, tmp_path, monkeypatch):
+        """A project that never stored group memory deletes cleanly — the GC is
+        a best-effort no-op on a missing store, not an error."""
+        monkeypatch.setenv("KIROCREW_HOME", str(tmp_path / "home"))
+        store = ProjectStore(base_dir=tmp_path)
+        store.create_project("P", project_id="grp-nomem")
+        assert store.delete_project("grp-nomem") is True
+
+    def test_delete_succeeds_even_if_gc_raises(self, tmp_path, monkeypatch):
+        """GC is post-commit and best-effort: a failure in delete_group_memory
+        must NOT roll back or fail the record deletion the caller asked for."""
+        monkeypatch.setenv("KIROCREW_HOME", str(tmp_path / "home"))
+        import kiro_crew.dashboard.project_store as ps
+
+        def _boom(_gid):
+            raise OSError("simulated GC failure")
+
+        monkeypatch.setattr(ps, "delete_group_memory", _boom)
+        store = ProjectStore(base_dir=tmp_path)
+        store.create_project("P", project_id="grp-boom")
+        # The record delete still returns True and the record is gone.
+        assert store.delete_project("grp-boom") is True
+        assert store.get_project("grp-boom") is None
+
 
 class TestDurability:
     def test_corrupt_file_raises_not_empties(self, tmp_path):
