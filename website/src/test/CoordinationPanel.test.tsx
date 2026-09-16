@@ -98,7 +98,11 @@ describe('CoordinationPanel', () => {
     const members = labelOf(i18nT('components.coordinationPanel.members'))
     const work = labelOf(i18nT('components.coordinationPanel.work'))
     const collisions = labelOf(i18nT('components.coordinationPanel.collisions'))
+    // Each section must be PRESENT (index >= 0), not just relatively ordered —
+    // otherwise a dropped middle section could ride on -1 arithmetic.
     expect(members).toBeGreaterThanOrEqual(0)
+    expect(work).toBeGreaterThanOrEqual(0)
+    expect(collisions).toBeGreaterThanOrEqual(0)
     expect(work).toBeGreaterThan(members)
     expect(collisions).toBeGreaterThan(work)
   })
@@ -134,6 +138,10 @@ describe('CoordinationPanel', () => {
     const err = await screen.findByTestId('coordination-panel-error', {}, { timeout: 5000 })
     expect(err).toBeInTheDocument()
     expect(within(err).getByText('gateway down')).toBeInTheDocument()
+    // "keeps data out": the section bodies must not render alongside the error,
+    // even if a prior poll had populated data.
+    expect(screen.queryByText(i18nT('components.coordinationPanel.members'))).toBeNull()
+    expect(screen.queryByText(i18nT('components.coordinationPanel.work'))).toBeNull()
   })
 
   it('does not fetch when the session is not tagged into any project group', async () => {
@@ -154,5 +162,44 @@ describe('CoordinationPanel', () => {
     await screen.findByText('aidlc-migration')
     // A worker not among this group's sessions shows its key rather than crashing.
     expect(screen.getByText('sess-ghost')).toBeInTheDocument()
+  })
+
+  it('falls back to the raw key for a COLLISION participant absent from the session set', async () => {
+    // The label() fallback also guards the collision row — a colliding session
+    // key not present in sessions[] must render its raw key, not vanish.
+    mockApi.getProjectPanel.mockResolvedValue({
+      ...panel,
+      collisions: [{ signal: 'same-file', repo_rel_path: 'src/app.py', sessions: ['sess-a', 'sess-ghost'] }],
+    })
+    renderPanel()
+    await screen.findByText('aidlc-migration')
+    expect(screen.getByText('Worker A, sess-ghost')).toBeInTheDocument()
+  })
+
+  it('renders the singular/plural count pills from the COMPONENT (not just the catalog)', async () => {
+    // 1 session -> singular, 2 collisions -> plural, driven by the component's
+    // own sessions.length / collisions.length wiring.
+    mockApi.getProjectPanel.mockResolvedValue({
+      project: { id: 'grp-1', name: 'aidlc-migration' },
+      sessions: [{ session: 'sess-a', title: 'Worker A', agent: 'kirocrew', branch: 'feature/api' }],
+      work: [],
+      collisions: [
+        { signal: 'same-file', repo_rel_path: 'a.py', sessions: ['sess-a'] },
+        { signal: 'same-worktree', sessions: ['sess-a'] },
+      ],
+    })
+    renderPanel()
+    await screen.findByText('aidlc-migration')
+    expect(screen.getByText('1 session')).toBeInTheDocument()
+    expect(screen.getByText('2 collisions')).toBeInTheDocument()
+  })
+
+  it('does not crash on a 200 with an unexpected body (defensive project?.name guard)', async () => {
+    // A malformed/skewed 200 (no project/sessions keys) must degrade to the
+    // loading/empty affordance, never throw and blank the panel.
+    mockApi.getProjectPanel.mockResolvedValue({} as never)
+    renderPanel()
+    // The header falls back to the loading label rather than throwing on .name.
+    expect(await screen.findByText(i18nT('components.coordinationPanel.loading'))).toBeInTheDocument()
   })
 })

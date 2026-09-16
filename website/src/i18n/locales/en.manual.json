@@ -3046,7 +3046,7 @@
       "collisions": "Collisions",
       "same_file": "Same file",
       "same_worktree": "Same worktree",
-      "empty_state": "No live sessions are tagged into this project yet.",
+      "empty_state": "No other live sessions are in this project yet. Tag another session into it to coordinate.",
       "no_project": "Tag this session into a project to see who else is working on it."
     },
     "logEntry": {
