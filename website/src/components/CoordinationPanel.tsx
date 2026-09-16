@@ -61,7 +61,10 @@ export default function CoordinationPanel({ projectGroupId, onClose }: Coordinat
         <div className="flex items-center gap-2 h-[38px] px-3 shrink-0 border-b border-border">
           <Users size={14} className="text-accent shrink-0" />
           <span className="text-[12px] font-medium text-text truncate">
-            {data?.project?.name || i18nT('components.coordinationPanel.loading')}
+            {data?.project?.name
+              || (error
+                ? i18nT('components.coordinationPanel.load_failed_short')
+                : i18nT('components.coordinationPanel.loading'))}
           </span>
           {sessions.length > 0 && (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-hover text-muted font-mono shrink-0">

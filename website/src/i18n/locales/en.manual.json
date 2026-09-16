@@ -3039,6 +3039,7 @@
       "collision_count_other": "{{count}} collisions",
       "refresh": "Refresh",
       "load_failed": "Couldn’t load this project’s coordination view.",
+      "load_failed_short": "Failed to load",
       "members": "Members",
       "coordinator": "coordinator",
       "work": "Work",
