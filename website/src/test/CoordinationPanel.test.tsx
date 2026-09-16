@@ -198,11 +198,12 @@ describe('CoordinationPanel', () => {
   })
 
   it('does not crash on a 200 with an unexpected body (defensive project?.name guard)', async () => {
-    // A malformed/skewed 200 (no project/sessions keys) must degrade to the
-    // loading/empty affordance, never throw and blank the panel.
+    // A malformed/skewed 200 (no project/sessions keys) must degrade to a
+    // failure affordance — never throw and blank the panel, and never report
+    // "Loading…" indefinitely for a request that already completed.
     mockApi.getProjectPanel.mockResolvedValue({} as never)
     renderPanel()
-    // The header falls back to the loading label rather than throwing on .name.
-    expect(await screen.findByText(i18nT('components.coordinationPanel.loading'))).toBeInTheDocument()
+    expect(await screen.findByText(i18nT('components.coordinationPanel.load_failed_short'))).toBeInTheDocument()
+    expect(screen.queryByText(i18nT('components.coordinationPanel.loading'))).toBeNull()
   })
 })
