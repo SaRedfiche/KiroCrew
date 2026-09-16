@@ -455,3 +455,43 @@ skipped, backend-only). No CONCERNS.
 the reviewed SHA is a dead-line removal + comment + 3 tests (non-behavioral —
 gate re-run not required; 365 coordination-suite tests incl. the drift-guard
 green). Both review gates GO. Final head: `b9f2d3e25`.
+
+
+---
+
+## §12.6 Project-group shared memory (store + injection tier + MCP tools + GC) — `feature/project-group-shared-memory` (rebased onto current `origin/main`)
+
+The Phase-3 §12.6 feature on top of the (rebased) peer-coordination stack:
+`GroupMemoryStore` (per-group markdown blob under `data_home()/group-memory/<id>`,
+path-traversal-guarded, atomic writes under a per-group advisory flock, locked
+append with a total-blob cap, read degrades to `""` on any OSError); the injection
+tier in `context.py` (between global memory and session lessons, window-scaled
+`caps.group`, self-defers on no-tag/no-memory/malformed-id/unreadable); two MCP
+tools on `kirocrew-dashboard` (`group_memory_read` = any tagged member,
+`group_memory_write` = coordinator-only, group resolved server-side from the caller
+slot, never a request arg); and GC hooked into `ProjectStore.delete_project`.
+
+| Gate | Verdict | Notes |
+|---|---|---|
+| Build + tests | GO | store/tier/routes + coordination suites green (incl. new append/blob-cap/read-OSError/precedence + GC tests) |
+| ASH (`f7ae4f72`, 8 scanners: bandit/opengrep SAST, grype/npm-audit/syft SCA, checkov/cdk-nag/cfn-nag) | GO for diff | 0 findings attributable to the diff; one grype MEDIUM (`pytest 8.3.4` GHSA-6w46-j5rx-g56g) is PRE-EXISTING on main in `aws_control/.../requirements-dev.txt`, not in our diff |
+| Holmes (`2926d59c`, default baseline) | GO for diff | 1 MEDIUM `regex_dos` in `context.py` — PRE-EXISTING (our diff added no `re.compile`; only the group-memory import + caps field + tier) |
+| Adversarial crew (6 axes, on `1fb07eb19`←`57febe74e`) | GO after fixes | NO-GO round: Correctness H1 (unreadable-blob tier crash) + Data-integrity H (deterministic `.tmp` name / lock-free append lost-update) + M1 (unbounded append blob) + Security M (coordinator-class-vs-group wording) + Nits. ALL fixed: `read()` catches OSError; writes use `atomic_write` under a per-group flock; locked append with `GROUP_MEMORY_BLOB_MAX` refusal; wording/typo/marker-cap corrected. Security/AI-necessity axes GO (deterministic; unforgeable server-side group id). Tests axis GO-with-followups (precedence test now asserts both halves). |
+| Multimodel panel (`docs/scan-group-memory-1fb07eb.md`) | GO after fixes | NO-GO round: GPT 3 BLOCKs — (1) append over `read()` could overwrite an unreadable blob = data loss; (2) sink rationale claimed the injection path redacts when it does not; (3) docstring claimed a human dashboard write path that does not exist. Opus PASS. All 3 fixed: append reads directly under the lock (only FileNotFound=empty, other OSError propagates); sink rationale corrected to name the HTTP-read boundary (injection is unredacted, same as sibling memory tiers); docstring corrected to coordinator-only MCP. Design/UX CONCERNS = `prompt()` (documented Phase-4 follow-up) + blob-cap message (reworded to user vocabulary). |
+
+**First-Principles BLOCK — accepted follow-up, NOT fixed this gate.** First-Principles
+flagged `ProjectStore.observe_repo` + the panel `repos` field + `CollisionIndex.distinct_session_count`
+as dead-code-behind-a-completeness-claim (0 production callers; panel ships `[]`).
+This is a legitimate SUBTRACTION finding on **pre-existing P1 code** (already gated
+GO and shipped in prior sessions), not on the §12.6 change under review. Removing
+`repos` is an on-disk `projects.json` schema change that `Project.from_dict`'s
+exact-shape validation would then reject for existing files — a migration hazard,
+not the cheap subtraction First-Principles assumes. Deferred as a documented
+follow-up (remove the unused rollup + counter in a dedicated P1-cleanup change with
+a `from_dict` back-compat path) rather than widening the §12.6 gate into shipped P1
+internals. The dead code is `[]`-either-way — no correctness/security/data risk.
+
+**Paired verdict @ crew+panel-reviewed `57febe74e`/`1fb07eb19` → fixes on `1fb07eb19` (+ this round):**
+crew NO-GO→GO (H1/H+M1/Security-M fixed) | panel NO-GO→GO (GPT 3 BLOCKs fixed, Opus PASS,
+FP BLOCK adjudicated as accepted P1-cleanup follow-up, Design/UX CONCERNS=documented
+follow-ups). Both gates re-run required on the fix SHA (production code changed).
