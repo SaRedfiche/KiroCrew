@@ -39,6 +39,9 @@ vi.mock('./FolderMoveSubmenu', () => ({
 vi.mock('./SendToInstanceSubmenu', () => ({ default: () => <div>zzq-send</div> }))
 vi.mock('./SessionColorSwatches', () => ({ default: () => <div>zzq-colors</div> }))
 vi.mock('./LinkedSurfacesSection', () => ({ default: () => <div>zzq-links</div> }))
+// ProjectTagSubmenu renders a Radix DropdownMenuSub, which throws outside a
+// real Menu context under happy-dom; stub it like the other sibling submenus.
+vi.mock('./ProjectTagSubmenu', () => ({ default: () => <div>zzq-project</div> }))
 
 const actions = vi.hoisted(() => ({
   toggleRead: vi.fn(),
