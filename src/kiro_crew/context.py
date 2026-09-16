@@ -3906,9 +3906,12 @@ class ContextBuilder:
                     cap=caps.group,
                     query=query_text,
                 )
-            except GroupMemoryError:
-                # A malformed group id is a data problem, not a turn-fatal one:
-                # skip the tier rather than fail the whole context build.
+            except (GroupMemoryError, OSError):
+                # A malformed group id or an unreadable blob is a data problem,
+                # not a turn-fatal one: skip the tier rather than fail the whole
+                # context build. (read() already degrades OSError to ""; this is
+                # defense-in-depth so no future get_context change can crash a
+                # tagged session's turn on a bad shared-memory file.)
                 logger.warning(
                     "Skipping group-memory tier: unusable project_group_id=%r",
                     project_group_id,

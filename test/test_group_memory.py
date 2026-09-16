@@ -63,6 +63,49 @@ class TestGroupMemoryStore:
         d = group_memory.group_dir("grp-1")
         assert not any(p.suffix == ".tmp" for p in d.iterdir())
 
+    def test_append_accumulates_with_separator(self, store_root):
+        s = GroupMemoryStore("grp-1")
+        s.append("first")
+        s.append("second")
+        # Exact form: distinct entries joined by the blank-line separator, no
+        # run-together and no blank-line accumulation from repeated appends.
+        assert s.read() == "first\n\nsecond"
+
+    def test_append_onto_empty_is_just_the_text(self, store_root):
+        s = GroupMemoryStore("grp-1")
+        assert s.append("only") == "only"
+        assert s.read() == "only"
+
+    def test_append_refuses_past_blob_cap(self, store_root):
+        s = GroupMemoryStore("grp-1")
+        s.write("x" * 40)
+        # A second append whose RESULT exceeds the cap is refused, not truncated,
+        # and the prior blob is left intact.
+        with pytest.raises(group_memory.GroupMemoryBlobTooLarge):
+            s.append("y" * 40, blob_max=50)
+        assert s.read() == "x" * 40
+
+    def test_read_degrades_to_empty_on_oserror(self, store_root, monkeypatch):
+        # An unreadable blob (permissions, I/O error, path-is-a-dir) must read as
+        # "" so the injection tier self-defers rather than crashing the turn.
+        s = GroupMemoryStore("grp-1")
+        s.write("stored")
+
+        def _boom(*a, **k):
+            raise PermissionError("simulated unreadable memory.md")
+
+        monkeypatch.setattr(type(s._path), "read_text", _boom)
+        assert s.read() == ""
+        # get_context, which reads, likewise degrades to "" (no raise).
+        assert s.get_context() == ""
+
+    def test_get_context_marker_only_cap_returns_empty(self, store_root):
+        # A cap too small to hold even the truncation marker yields "" rather
+        # than a marker-only block (pure noise).
+        s = GroupMemoryStore("grp-1")
+        s.write("x" * 100)
+        assert s.get_context(cap=5) == ""
+
 
 class TestGroupIdShape:
     @pytest.mark.parametrize("bad", ["", "a/b", "a\\b", "a\0b"])

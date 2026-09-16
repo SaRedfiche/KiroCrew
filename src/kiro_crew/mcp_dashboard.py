@@ -303,10 +303,10 @@ def _tool_definitions() -> list[dict[str, Any]]:
             "description": (
                 "Write this project group's SHARED MEMORY — the durable project "
                 "context every tagged session then sees. COORDINATOR ONLY: a session "
-                "that owns a work ledger may write; a plain member session is "
-                "refused, so one worker cannot rewrite the context its siblings "
-                "ingest. Which group is written is resolved from THIS session's "
-                "project tag, never supplied. `mode` is 'append' (default — adds a "
+                "that owns a work ledger may write; a plain member session (no "
+                "work ledger) is refused, so an ordinary worker cannot rewrite the "
+                "context its siblings ingest. Which group is written is resolved "
+                "from THIS session's project tag, never supplied. `mode` is 'append' (default — adds a "
                 "note, keeping what is there) or 'replace' (overwrites the whole "
                 "blob; use it to prune or restructure). Write durable facts and "
                 "conventions, not per-turn status. Answers an error when this "
@@ -1948,7 +1948,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         # slot, so identity must be the one the gateway can vouch for — the
         # lenient /proc walk would resolve a subagent to its parent slot and read
         # or write the parent's group. Send the verified key; the handler derives
-        # the group_group_id (and, for write, the coordinator status) from it.
+        # the project_group_id (and, for write, the coordinator status) from it.
         caller_key, strict_err = require_strict_session_key(
             "Error: cannot verify which session is calling, so its project group "
             "cannot be resolved — group memory requires a caller identity the "

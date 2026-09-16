@@ -2048,11 +2048,13 @@ ARTIFACT_MOVE_SCHEMA = ToolSchema(
 # unforgeable-identity discipline the work-ledger tools rest on. So ``read`` has
 # no fields at all, and ``write`` carries only the text and how to apply it.
 _GROUP_MEMORY_MODES = frozenset({"replace", "append"})
-# Bounds the whole stored blob. Generous — this is durable project context a
-# coordinator curates, not a per-turn message — but finite, so a runaway write
-# cannot grow the file without limit. Refused (not truncated): a coordinator who
-# is told the cap trims their own text, where a silent truncation would drop the
-# tail they believed they saved.
+# Bounds a SINGLE write's text — generous (durable project context a coordinator
+# curates, not a per-turn message) but finite, and refused (not truncated) so a
+# coordinator who is told the cap trims their own text rather than losing the
+# tail silently. This does NOT bound the ACCUMULATED blob: append concatenates,
+# so the total-file ceiling is enforced separately in the store
+# (``group_memory.GROUP_MEMORY_BLOB_MAX``), which refuses an append whose result
+# would exceed it.
 _GROUP_MEMORY_TEXT_MAX = 16_000
 
 GROUP_MEMORY_READ_SCHEMA = ToolSchema(tool_name="group_memory_read", fields=[])
