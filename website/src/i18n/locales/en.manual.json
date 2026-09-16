@@ -3044,7 +3044,8 @@
       "collisions": "Collisions",
       "same_file": "Same file",
       "same_worktree": "Same worktree",
-      "empty_state": "No live sessions are tagged into this project yet."
+      "empty_state": "No live sessions are tagged into this project yet.",
+      "no_project": "Tag this session into a project to see who else is working on it."
     },
     "logEntry": {
       "trace_load_failed": "Couldn’t load this run’s trace."
@@ -3351,6 +3352,7 @@
       "browser": "Browser",
       "changes": "Changes",
       "context": "Context",
+      "coordination": "Coordination",
       "diff": "{{name}} - Diff",
       "files": "Files",
       "links": "Links",
@@ -3814,6 +3816,8 @@
         "menu_changes_desc": "Pull requests, checks & reviews",
         "menu_context": "Context breakdown",
         "menu_context_desc": "Context added during this session's turns",
+        "menu_coordination": "Coordination",
+        "menu_coordination_desc": "Sessions, work & collisions in this project",
         "menu_files": "Files",
         "menu_files_desc": "Project file browser with a built-in viewer",
         "menu_links": "Links",

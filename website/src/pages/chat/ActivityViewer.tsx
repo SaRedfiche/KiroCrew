@@ -28,6 +28,7 @@ import { ContextBreakdownTab } from '../ContextBreakdownPanel'
 import SessionSummaryTab from './SessionSummaryTab'
 import { i18nT } from '../../i18n/t'
 import GitPanel from '../../components/GitPanel'
+import CoordinationPanel from '../../components/CoordinationPanel'
 import { fmtDateFields } from '../../i18n/format'
 import { isModelDowngrade } from './subagentCompletion'
 import { normalizeModelKey } from '../../lib/model'
@@ -827,10 +828,12 @@ function ArtifactListRow({ row, busy, onOpen, onSave }: {
   )
 }
 
-export default function ActivityViewer({ subagents, toolLog, open, onToggle, slot, onFileOpen, onArtifactOpen, navLinks, navResolving, view, sources, selectedSourceUrl, onSelectSource, onReconcileSource, issues, selectedIssueUrl, onSelectIssue, onReconcileIssue, onAddToChat, pins, pinsLoading, onJumpToPin, onUnpin, slotTitle, chatMode, projectDir }: {
+export default function ActivityViewer({ subagents, toolLog, open, onToggle, slot, onFileOpen, onArtifactOpen, navLinks, navResolving, view, sources, selectedSourceUrl, onSelectSource, onReconcileSource, issues, selectedIssueUrl, onSelectIssue, onReconcileIssue, onAddToChat, pins, pinsLoading, onJumpToPin, onUnpin, slotTitle, chatMode, projectDir, projectGroupId }: {
   subagents: Record<string, SubagentActivity>; toolLog: ToolActivity[]; open: boolean; onToggle: () => void; slot: string
   onFileOpen?: (path: string) => void; onArtifactOpen?: (slug: string) => void
   projectDir?: string
+  /** The active session's project_group_id (Coordination view). */
+  projectGroupId?: string
   navLinks?: ExtractedLink[]; navResolving?: boolean
   sources?: PullRequestLink[]; selectedSourceUrl?: string; onSelectSource?: (url: string) => void; onReconcileSource?: (url: string) => void; onAddToChat?: (text: string) => void
   /** Issue links mentioned in this session, plus the Issues tab's own selection. */
@@ -847,7 +850,7 @@ export default function ActivityViewer({ subagents, toolLog, open, onToggle, slo
   chatMode?: string
   /** When set, render ONLY this view and hide the internal SegmentedControl.
    *  Used by SidePanel, which owns the top-level tab strip. */
-  view?: 'changes' | 'issues' | 'subagents' | 'logs' | 'context' | 'links' | 'artifacts' | 'side' | 'workflows' | 'git' | 'summary' | 'pins'
+  view?: 'changes' | 'issues' | 'subagents' | 'logs' | 'context' | 'links' | 'artifacts' | 'side' | 'workflows' | 'git' | 'summary' | 'pins' | 'coordination'
 }) {
   const dispatch = useAppDispatch()
   const [, setSelected] = useState(0)
@@ -1006,7 +1009,7 @@ export default function ActivityViewer({ subagents, toolLog, open, onToggle, slo
         <div className="px-3 py-2 shrink-0 flex justify-center">
           <SegmentedControl
             segments={TABS}
-            value={effectiveTab === 'context' || effectiveTab === 'git' || effectiveTab === 'summary' || effectiveTab === 'pins' ? tab : effectiveTab}
+            value={effectiveTab === 'context' || effectiveTab === 'git' || effectiveTab === 'summary' || effectiveTab === 'pins' || effectiveTab === 'coordination' ? tab : effectiveTab}
             onChange={t => { setTab(t); explicitTab.current = true; dispatch(openActivityToTab(t)) }}
             layoutId="activity-tab"
           />
@@ -1040,6 +1043,19 @@ export default function ActivityViewer({ subagents, toolLog, open, onToggle, slo
           ) : (
             <div className="text-muted text-[13px] pt-8 px-6 text-center">
               {i18nT('components.gitPanel.no_project')}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Coordination (project-group shared view) */}
+      {effectiveTab === ('coordination' as string) && (
+        <div className="flex-1 min-h-0 overflow-hidden">
+          {projectGroupId ? (
+            <CoordinationPanel projectGroupId={projectGroupId} onClose={onToggle} />
+          ) : (
+            <div className="text-muted text-[13px] pt-8 px-6 text-center">
+              {i18nT('components.coordinationPanel.no_project')}
             </div>
           )}
         </div>
