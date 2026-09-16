@@ -146,10 +146,14 @@ export default function SessionActionsMenu({
   })
   const coordinationProjects = projectsResp?.projects ?? []
   const queryClient = useQueryClient()
-  // After any tag write the session's project_group_id changes (server truth
-  // arrives via the slot stream) AND a create adds a record, so refresh both.
+  // After any tag write the session's project_group_id changes AND a create
+  // adds a record, so refresh both. We must invalidate the slot list ourselves
+  // rather than trusting the slot stream to push the new project_group_id: if
+  // we don't, currentSlot.project_group_id stays stale, so the Coordination
+  // tab's withhold guard never flips and an untag never visibly clears.
   const afterTagWrite = () => {
     void queryClient.invalidateQueries({ queryKey: ['coordination-projects'] })
+    void queryClient.invalidateQueries({ queryKey: ['chat-slots'] })
   }
   const tagPickProject = (projectGroupId: string) => {
     void api.setSlotProjectGroup(slotKey, { projectGroupId }).then(afterTagWrite)
