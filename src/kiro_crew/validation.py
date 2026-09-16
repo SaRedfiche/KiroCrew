@@ -2240,6 +2240,31 @@ ARTIFACT_MOVE_SCHEMA = ToolSchema(
     ],
 )
 
+# ── Group shared memory (design §12.6) ──
+#
+# The two project-group shared-memory tools on ``kirocrew-dashboard``. Neither
+# takes a ``project_group_id``: which group a call touches is resolved from the
+# CALLING SESSION's own slot server-side, never from an argument — the same
+# unforgeable-identity discipline the work-ledger tools rest on. So ``read`` has
+# no fields at all, and ``write`` carries only the text and how to apply it.
+_GROUP_MEMORY_MODES = frozenset({"replace", "append"})
+# Bounds the whole stored blob. Generous — this is durable project context a
+# coordinator curates, not a per-turn message — but finite, so a runaway write
+# cannot grow the file without limit. Refused (not truncated): a coordinator who
+# is told the cap trims their own text, where a silent truncation would drop the
+# tail they believed they saved.
+_GROUP_MEMORY_TEXT_MAX = 16_000
+
+GROUP_MEMORY_READ_SCHEMA = ToolSchema(tool_name="group_memory_read", fields=[])
+
+GROUP_MEMORY_WRITE_SCHEMA = ToolSchema(
+    tool_name="group_memory_write",
+    fields=[
+        FieldSpec("text", str, required=True, max_len=_GROUP_MEMORY_TEXT_MAX),
+        FieldSpec("mode", str, allowed=_GROUP_MEMORY_MODES),
+    ],
+)
+
 DEPLOY_ARTIFACT_SCHEMA = ToolSchema(
     tool_name="deploy_artifact",
     fields=[
@@ -3461,6 +3486,8 @@ MCP_DASHBOARD_SCHEMAS: dict[str, ToolSchema] = {
     "chat_tag_create": CHAT_TAG_CREATE_SCHEMA,
     "chat_tag_update": CHAT_TAG_UPDATE_SCHEMA,
     "chat_tag_assign": CHAT_TAG_ASSIGN_SCHEMA,
+    "group_memory_read": GROUP_MEMORY_READ_SCHEMA,
+    "group_memory_write": GROUP_MEMORY_WRITE_SCHEMA,
 }
 
 # ── Tool Schemas (MCP crew log — server ``kirocrew-crew-log``) ──

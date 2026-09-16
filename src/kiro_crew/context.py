@@ -32,6 +32,7 @@ from kiro_crew.config.loader import KiroCrewConfig, workspace_dir_for
 from kiro_crew.config.paths import kiro_agents_dir
 from kiro_crew.context_blocks import measure_prompt
 from kiro_crew.cron import get_local_tz
+from kiro_crew.group_memory import GroupMemoryError, GroupMemoryStore
 from kiro_crew.hooks import (
     HOOK_INJECT_CONTEXT,
     HOOK_MODIFY,
@@ -1019,6 +1020,7 @@ _HISTORY_REFERENCE_BASE = 165_000
 _HISTORY_BUDGET_CHARS = int(_HISTORY_REFERENCE_BASE * 0.21)
 _MEMORY_PREFS_CAP = _budget(0.026)  # user preferences                     = 2.6%
 _MEMORY_PROJECTS_CAP = _budget(0.039)  # active projects                      = 3.9%
+_GROUP_MEMORY_CAP = _budget(0.039)  # project-group shared memory (§12.6)   = 3.9%
 _MEMORY_HISTORY_CAP = _budget(0.16)  # daily history (multi-tier decay)     = 16%
 _LESSONS_CAP = _budget(0.226)  # learned corrections (high priority)  = 22.6%
 # Startup rule allowance for the authored directive tier. Window-INDEPENDENT
@@ -1110,6 +1112,7 @@ class _ResolvedCaps:
     base: int
     prefs: int
     projects: int
+    group: int
     memory_history: int
     lessons: int
     lessons_startup: int
@@ -1126,8 +1129,27 @@ class _ResolvedCaps:
 
     @property
     def max_context(self) -> int:
-        """One shared admission budget; section limits do not add capacity."""
-        return self.base
+        """Global ceiling = Σ independent section caps (by design).
+
+        Computed from the fields so there is ONE summation (this) — the module
+        constant ``_MAX_CONTEXT_CHARS`` is itself derived from this property at
+        the reference window, so the two can never drift. ``per_message`` is a
+        within-history-section cap, not an additive section, so it is excluded
+        (matching the historical ``_MAX_CONTEXT_CHARS`` composition).
+        """
+        return (
+            self.compressed_history
+            + self.prefs
+            + self.projects
+            + self.group
+            + self.memory_history
+            + self.semantic
+            + self.episodic
+            + self.lessons
+            + self.skills
+            + self.steering
+            + self.preamble_headroom
+        )
 
 
 def _effective_window(window_tokens: int | None) -> int:
@@ -1168,6 +1190,7 @@ def _resolve_caps_cached(window: int) -> _ResolvedCaps:
         base=base,
         prefs=_scaled(_MEMORY_PREFS_CAP),
         projects=_scaled(_MEMORY_PROJECTS_CAP),
+        group=_scaled(_GROUP_MEMORY_CAP),
         memory_history=_scaled(_MEMORY_HISTORY_CAP),
         lessons=_scaled(_LESSONS_CAP),
         lessons_startup=_scaled(_LESSONS_STARTUP_CAP),
@@ -3495,6 +3518,7 @@ class ContextBuilder:
         context_groups: frozenset[str] | None = None,
         query_text: str = "",
         project: str | None = None,
+        project_group_id: str | None = None,
         member: str = "",
         execution_context: Any = None,
         _v2_essentials: str | None = None,
@@ -4030,6 +4054,38 @@ class ContextBuilder:
                 )
         _mark("memory")
 
+        # Project-group shared memory (design §12.6). A durable, human/
+        # coordinator-authored blob keyed by the session's ``project_group_id``,
+        # injected into every session tagged into the same group so project
+        # background is maintained ONCE instead of re-fed per session. Placed
+        # AFTER global memory and BEFORE session lessons: a session's own learned
+        # lessons still take precedence over shared project context. Gated by the
+        # SAME memory group + ``blocks_reads`` (temporary sessions) as the memory
+        # tier — shared project context is memory — and self-defers to "" when the
+        # session carries no group tag or the group has no memory yet (no marker,
+        # no error). Scaled by the ``group`` cap via the existing caps machinery.
+        if (
+            project_group_id
+            and not blocks_reads
+            and _group_included(context_groups, CONTEXT_GROUP_MEMORY)
+        ):
+            try:
+                group_ctx = GroupMemoryStore(project_group_id).get_context(
+                    cap=caps.group,
+                    query=query_text,
+                )
+            except GroupMemoryError:
+                # A malformed group id is a data problem, not a turn-fatal one:
+                # skip the tier rather than fail the whole context build.
+                logger.warning(
+                    "Skipping group-memory tier: unusable project_group_id=%r",
+                    project_group_id,
+                )
+                group_ctx = ""
+            if group_ctx:
+                parts.append(group_ctx + "\n\n")
+        _mark("group_memory")
+
         # Skills. Three cases, in precedence order:
         #
         # 1. The agent template maps skills via ``skill://`` resources. On the
@@ -4305,6 +4361,7 @@ class ContextBuilder:
         thread_ts: str | None = None,
         workspace: str | None = None,
         project: str | None = None,
+        project_group_id: str | None = None,
         memory_store: str | None = None,
         user_display_name: str | None = None,
         compressed_history: str | None = None,
@@ -4556,6 +4613,7 @@ class ContextBuilder:
                     context_groups=context_groups,
                     query_text=text,
                     project=project,
+                    project_group_id=project_group_id,
                     member=member,
                     execution_context=execution_context,
                     _v2_essentials=_essentials,

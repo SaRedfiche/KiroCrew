@@ -73,7 +73,20 @@ def test_larger_than_reference_window_cannot_expand_background():
 
 def test_global_ceiling_is_shared_not_additive():
     caps = ctx._resolve_caps(200_000)
-    assert caps.max_context == caps.base
+    expected = (
+        caps.compressed_history
+        + caps.prefs
+        + caps.projects
+        + caps.group
+        + caps.memory_history
+        + caps.semantic
+        + caps.episodic
+        + caps.lessons
+        + caps.skills
+        + caps.steering
+        + caps.preamble_headroom
+    )
+    assert caps.max_context == expected
 
 
 # ── Fail-safe fallbacks (must never shrink the default deployment) ───────────

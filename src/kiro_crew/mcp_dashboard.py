@@ -101,6 +101,7 @@ from kiro_crew.validation import (
     CHAT_TAG_CREATE_SCHEMA,
     CHAT_TAG_LIST_SCHEMA,
     CHAT_TAG_UPDATE_SCHEMA,
+    GROUP_MEMORY_WRITE_SCHEMA,
     MCP_DASHBOARD_SCHEMAS,
     SESSION_CLOSE_SCHEMA,
     SESSION_CREATE_SCHEMA,
@@ -299,6 +300,59 @@ def _tool_definitions() -> list[dict[str, Any]]:
                         ),
                     },
                 },
+            },
+        },
+        {
+            "name": "group_memory_read",
+            "description": (
+                "Read this project group's SHARED MEMORY — durable background the "
+                "whole group works against (architecture, conventions, key facts), "
+                "maintained once instead of re-explained per session. Returns the "
+                "stored text, or empty when nothing is saved yet. Takes no "
+                "arguments: which group's memory you get is resolved from THIS "
+                "session's project tag, not supplied — so you can only read the "
+                "group you are in. Answers an error when this session is not tagged "
+                "into a project. This shared memory is also auto-injected into every "
+                "tagged session's context, so reading it is mostly for confirming or "
+                "before editing what is stored."
+            ),
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "group_memory_write",
+            "description": (
+                "Write this project group's SHARED MEMORY — the durable project "
+                "context every tagged session then sees. COORDINATOR ONLY: a session "
+                "that owns a work ledger may write; a plain member session is "
+                "refused, so one worker cannot rewrite the context its siblings "
+                "ingest. Which group is written is resolved from THIS session's "
+                "project tag, never supplied. `mode` is 'append' (default — adds a "
+                "note, keeping what is there) or 'replace' (overwrites the whole "
+                "blob; use it to prune or restructure). Write durable facts and "
+                "conventions, not per-turn status. Answers an error when this "
+                "session is not tagged into a project or is not a coordinator."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": (
+                            "The shared-memory text to store. Appended (default) or "
+                            "used as the whole blob when mode='replace'. Refused, not "
+                            "truncated, when it would exceed the stored cap."
+                        ),
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["append", "replace"],
+                        "description": (
+                            "'append' (default) adds to the existing memory; "
+                            "'replace' overwrites it entirely."
+                        ),
+                    },
+                },
+                "required": ["text"],
             },
         },
         {
@@ -2066,6 +2120,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             return redact(f"Unfiled session `{slot_key}` to the top level.")
         folder_label = _chat_folder_paths(chat_folders).get(fld_id, fld_id)
         return redact(f"Moved session `{slot_key}` into `{folder_label}` (id={fld_id}).")
+
     if name == "chat_folder_file_self":
         args = validate_tool_args(args, CHAT_FOLDER_FILE_SELF_SCHEMA)
         # The destination may not exist yet (mkdir -p, like session_create's
@@ -2314,6 +2369,43 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         if removed:
             parts.append(f"removed {removed}")
         return redact(f"Session `{slot_key}`: {'; '.join(parts)}. Tags now: {shown}.")
+
+    if name in ("group_memory_read", "group_memory_write"):
+        # Which group is touched is resolved SERVER-SIDE from the caller's own
+        # slot, so identity must be the one the gateway can vouch for — the
+        # lenient /proc walk would resolve a subagent to its parent slot and read
+        # or write the parent's group. Send the verified key; the handler derives
+        # the project_group_id (and, for write, the coordinator status) from it.
+        caller_key, strict_err = require_strict_session_key(
+            "Error: cannot verify which session is calling, so its project group "
+            "cannot be resolved — group memory requires a caller identity the "
+            "gateway can vouch for.",
+            server=SERVER_NAME,
+        )
+        if not caller_key:
+            return strict_err
+        if name == "group_memory_read":
+            resp = _get("/api/group-memory", session_key=caller_key)
+            if resp.get("error"):
+                return redact(f"Error: could not read group memory: {resp['error']}")
+            text = str(resp.get("memory") or "")
+            if not text.strip():
+                return "Project group shared memory is empty — nothing stored yet."
+            return redact(text)
+        # group_memory_write
+        args = validate_tool_args(args, GROUP_MEMORY_WRITE_SCHEMA)
+        payload: dict[str, Any] = {"text": args["text"]}
+        mode = str(args.get("mode") or "")
+        if mode:
+            payload["mode"] = mode
+        resp = _post("/api/group-memory", payload, session_key=caller_key)
+        if resp.get("error"):
+            return redact(f"Error: could not write group memory: {resp['error']}")
+        return (
+            f"Saved to project group shared memory (mode={resp.get('mode')}, "
+            f"{resp.get('chars')} chars stored). It is now injected into every "
+            "session tagged into this project."
+        )
     return f"Error: unknown tool '{name}'"
 
 

@@ -10980,6 +10980,7 @@ async def _run_chat(
                 resumed=_provider_has_history,
                 workspace=slot.workspace or None,
                 project=slot.project or None,
+                project_group_id=getattr(slot, "project_group_id", "") or None,
                 memory_store=memory_store,
                 compressed_history=compressed,
                 mode=slot.mode,
