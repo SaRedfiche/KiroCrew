@@ -3167,6 +3167,22 @@
     "workspaceTree": {
       "status_failed": "Couldn’t read the repository status."
     },
+    "coordinationPanel": {
+      "title": "Coordination",
+      "loading": "Loading…",
+      "session_count": "{{count}} sessions",
+      "collision_count": "{{count}} collisions",
+      "refresh": "Refresh",
+      "load_failed": "Couldn’t load this project’s coordination view.",
+      "members": "Members",
+      "coordinator": "coordinator",
+      "work": "Work",
+      "untitled_item": "(untitled)",
+      "collisions": "Collisions",
+      "same_file": "Same file",
+      "same_worktree": "Same worktree",
+      "empty_state": "No live sessions are tagged into this project yet."
+    },
     "logEntry": {
       "trace_load_failed": "Couldn’t load this run’s trace."
     },
