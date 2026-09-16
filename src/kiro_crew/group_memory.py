@@ -224,7 +224,13 @@ def delete_group_memory(group_id: str) -> bool:
 
     Called by the group-memory GC when the project is deleted
     (:meth:`ProjectStore.delete_project`, design §12.6 GC). Best-effort and
-    idempotent — a missing store is a no-op.
+    idempotent — a missing store is a no-op. Returns whether the store is gone
+    AFTER the call: ``True`` only when the directory was actually removed (or was
+    already absent → ``False``). A removal failure (permissions / I/O) is NOT
+    swallowed-as-success — ``rmtree`` runs without ``ignore_errors`` and the
+    resulting ``OSError`` propagates to the caller, whose own ``try/except``
+    keeps a GC failure from rolling back the record delete. So a caller never
+    sees ``True`` while durable group memory silently remains.
     """
     try:
         d = group_dir(group_id)
@@ -234,5 +240,7 @@ def delete_group_memory(group_id: str) -> bool:
         return False
     import shutil
 
-    shutil.rmtree(d, ignore_errors=True)
-    return True
+    # No ignore_errors: a genuine removal failure must surface (the caller
+    # swallows it post-commit), not be reported as a successful GC.
+    shutil.rmtree(d)
+    return not d.exists()
