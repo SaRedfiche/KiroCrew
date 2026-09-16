@@ -126,19 +126,26 @@ class GroupMemoryStore:
     def read(self) -> str:
         """The raw stored memory text, or ``""`` when nothing is stored yet.
 
-        Any read failure degrades to ``""`` rather than raising: a first-run
-        store is absent (``FileNotFoundError``), a torn parent is
-        ``NotADirectoryError``, and an unreadable file (permissions, I/O error,
-        the path being a directory) is ANY OTHER ``OSError`` — all of which the
-        tier must treat as "no group memory this turn", never a turn-fatal crash.
-        The design contract is that this tier is best-effort and self-defers to
-        empty; catching only the first two would let a ``PermissionError`` on
-        ``memory.md`` propagate out of the tier and fail every tagged session's
-        turn.
+        Swallows ONLY "the file isn't there" — ``FileNotFoundError`` (first run)
+        and ``NotADirectoryError`` (a torn parent). Any OTHER ``OSError``
+        (``PermissionError``, ``IsADirectoryError``, a disk I/O error) PROPAGATES,
+        so each caller decides honestly:
+
+        * the injection tier catches ``(GroupMemoryError, OSError)`` and
+          self-defers to "no tier this turn" — best-effort, never turn-fatal;
+        * the HTTP read handler catches ``OSError`` and returns 503
+          ``read_failed`` — an unreadable blob is a real failure, NOT a truthful
+          "empty", so it must not be reported as HTTP 200 empty;
+        * ``append`` reads directly (not via this method) under the lock so a
+          transient unreadable blob is never treated as empty and overwritten.
+
+        Reporting an unreadable file as ``""`` here would be a status-reporting
+        artefact (the read handler would 200-with-empty a genuine failure); the
+        best-effort degrade lives in the TIER's except, not in this shared read.
         """
         try:
             return self._path.read_text(encoding="utf-8")
-        except OSError:
+        except (FileNotFoundError, NotADirectoryError):
             return ""
 
     def write(self, text: str) -> None:

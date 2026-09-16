@@ -126,6 +126,22 @@ class TestGroupMemoryTier:
         assert "[PROJECT GROUP MEMORY" not in ctx
         assert "[CRITICAL RULES" in ctx  # the build still completed
 
+    def test_unreadable_blob_defers_without_crashing_the_build(self, tmp_path, group_root, monkeypatch):
+        # H1 guarantee at the tier: read() propagates a non-missing OSError, and
+        # the tier's except (GroupMemoryError, OSError) self-defers so an
+        # unreadable memory.md never fails a tagged session's whole turn.
+        from pathlib import Path
+
+        GroupMemoryStore(_GROUP).write(_BODY)
+
+        def _boom(*a, **k):
+            raise PermissionError("simulated unreadable memory.md")
+
+        monkeypatch.setattr(Path, "read_text", _boom)
+        ctx = _builder(tmp_path).build_session_context(project_group_id=_GROUP)
+        assert "[PROJECT GROUP MEMORY" not in ctx
+        assert "[CRITICAL RULES" in ctx  # the build still completed
+
     def test_cap_truncates_overlong_memory(self, tmp_path, group_root):
         GroupMemoryStore(_GROUP).write("X" * 100_000)
         ctx = _builder(tmp_path).build_session_context(project_group_id=_GROUP)

@@ -85,9 +85,10 @@ class TestGroupMemoryStore:
             s.append("y" * 40, blob_max=50)
         assert s.read() == "x" * 40
 
-    def test_read_degrades_to_empty_on_oserror(self, store_root, monkeypatch):
-        # An unreadable blob (permissions, I/O error, path-is-a-dir) must read as
-        # "" so the injection tier self-defers rather than crashing the turn.
+    def test_read_propagates_non_missing_oserror(self, store_root, monkeypatch):
+        # read() swallows ONLY FileNotFound/NotADir; any other OSError propagates
+        # so the HTTP handler can 503 and append never overwrites. The best-effort
+        # degrade-to-"" lives in the injection TIER's except, not here.
         s = GroupMemoryStore("grp-1")
         s.write("stored")
 
@@ -95,9 +96,10 @@ class TestGroupMemoryStore:
             raise PermissionError("simulated unreadable memory.md")
 
         monkeypatch.setattr(type(s._path), "read_text", _boom)
-        assert s.read() == ""
-        # get_context, which reads, likewise degrades to "" (no raise).
-        assert s.get_context() == ""
+        with pytest.raises(PermissionError):
+            s.read()
+        with pytest.raises(PermissionError):
+            s.get_context()
 
     def test_append_does_not_overwrite_an_unreadable_blob(self, store_root, monkeypatch):
         # GPT BLOCK regression: append must NOT treat a present-but-unreadable

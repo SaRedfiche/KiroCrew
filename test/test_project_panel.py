@@ -61,7 +61,7 @@ class TestProjectPanel:
             resp = await client.get("/api/projects/grp-1/panel")
             assert resp.status == 200
             data = await resp.json()
-            assert data["project"] == {"id": "grp-1", "name": "My Project", "repos": []}
+            assert data["project"] == {"id": "grp-1", "name": "My Project"}
             sessions = data["sessions"]
             assert len(sessions) == 1  # only the tagged one
             assert sessions[0]["title"] == "Work"

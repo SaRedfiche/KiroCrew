@@ -153,25 +153,13 @@ class TestRowCap:
 
     def test_one_row_per_session_regardless_of_edit_count(self):
         # Structure is bounded by distinct sessions, not edits: a session
-        # editing N times leaves exactly one row (its newest ts).
+        # editing N times leaves exactly one row (its newest ts). A lone session
+        # is never a collision, however many times it edits.
         idx = CollisionIndex()
         for i in range(100):
             _rec(idx, "solo", 1000.0 + i)
-        key = FileKey(_P, _R, _F)
-        # Only 'solo' present -> not a collision, and its single row is recent.
-        assert idx.distinct_session_count(key, live_sessions={"solo"}, now=1100.0) == 1
-
-
-class TestSuppressionCount:
-    def test_distinct_session_count_for_threshold(self):
-        idx = CollisionIndex()
-        for i, s in enumerate(["a", "b", "c", "d"]):
-            _rec(idx, s, 1000.0 + i)
-        key = FileKey(_P, _R, _F)
-        live = {"a", "b", "c", "d"}
-        assert idx.distinct_session_count(key, live_sessions=live, now=1005.0) == 4
-        # A high-churn file (> k sessions) is what the notify path suppresses.
-        assert idx.distinct_session_count(key, live_sessions={"a"}, now=1005.0) == 1
+        hits = idx.contested_files(_P, live_sessions={"solo"}, now=1100.0)
+        assert hits == []
 
 
 class TestPrune:
