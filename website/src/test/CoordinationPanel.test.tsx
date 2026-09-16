@@ -7,6 +7,7 @@ import { i18nT } from '../i18n/t'
 const mockApi = vi.hoisted(() => ({
   getProjectPanel: vi.fn(),
   setSlotProjectGroup: vi.fn(),
+  listCoordinationProjects: vi.fn(),
 }))
 vi.mock('../api/client', () => ({ api: mockApi }))
 
@@ -48,6 +49,8 @@ beforeEach(() => {
   mockApi.getProjectPanel.mockResolvedValue(panel)
   mockApi.setSlotProjectGroup.mockReset()
   mockApi.setSlotProjectGroup.mockResolvedValue({} as never)
+  mockApi.listCoordinationProjects.mockReset()
+  mockApi.listCoordinationProjects.mockResolvedValue({ projects: [] })
 })
 
 describe('CoordinationPanel', () => {
@@ -224,18 +227,36 @@ describe('CoordinationEmptyState (untagged on-ramp)', () => {
     }
   }
 
-  it('shows the discovery teaser AND a one-click tag CTA', () => {
+  it('shows the discovery teaser AND a create CTA when no projects exist', async () => {
     renderCta()
     // The dead-end copy is now paired with an action, so an untagged user both
     // learns the feature exists and can turn it on without hunting the ⋯ menu.
     expect(screen.getByText(i18nT('components.coordinationPanel.no_project'))).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: i18nT('components.coordinationPanel.tag_cta') })).toBeTruthy()
+    // With no existing projects, the sole action is create-by-name.
+    expect(await screen.findByRole('button', { name: i18nT('components.coordinationPanel.tag_cta') })).toBeTruthy()
+    expect(screen.queryByText(i18nT('components.coordinationPanel.join_existing'))).toBeNull()
   })
 
-  it('tags the session into a new project when the CTA is used', async () => {
+  it('offers pick-existing (the join case) when projects already exist', async () => {
+    mockApi.listCoordinationProjects.mockResolvedValue({
+      projects: [{ id: 'grp-1', name: 'aidlc-migration' }, { id: 'grp-2', name: 'other' }],
+    })
+    renderCta('sess-x')
+    // The join list appears, each existing project is a pick button, and the
+    // create button relabels to "New project…" so create is not the only path.
+    expect(await screen.findByText(i18nT('components.coordinationPanel.join_existing'))).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'aidlc-migration' }))
+    // Pick-existing tags by id — NOT a duplicate create-by-name.
+    await waitFor(() =>
+      expect(mockApi.setSlotProjectGroup).toHaveBeenCalledWith('sess-x', { projectGroupId: 'grp-1' }),
+    )
+    expect(mockApi.setSlotProjectGroup).not.toHaveBeenCalledWith('sess-x', { name: expect.anything() })
+  })
+
+  it('tags the session into a new project when the create CTA is used', async () => {
     const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('  aidlc-migration  ')
     renderCta('sess-x')
-    fireEvent.click(screen.getByRole('button', { name: i18nT('components.coordinationPanel.tag_cta') }))
+    fireEvent.click(await screen.findByRole('button', { name: i18nT('components.coordinationPanel.tag_cta') }))
     // Trimmed name, correct slot, create-by-name shape — the same tag API the
     // ⋯-menu path uses.
     await waitFor(() =>
@@ -244,11 +265,22 @@ describe('CoordinationEmptyState (untagged on-ramp)', () => {
     promptSpy.mockRestore()
   })
 
-  it('does nothing on a blank/cancelled prompt', () => {
+  it('does nothing on a blank/cancelled prompt', async () => {
     const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('   ')
     renderCta()
-    fireEvent.click(screen.getByRole('button', { name: i18nT('components.coordinationPanel.tag_cta') }))
+    fireEvent.click(await screen.findByRole('button', { name: i18nT('components.coordinationPanel.tag_cta') }))
     expect(mockApi.setSlotProjectGroup).not.toHaveBeenCalled()
+    promptSpy.mockRestore()
+  })
+
+  it('renders a tag-specific error (not a load error) when the tag write fails', async () => {
+    // F1: the mutation error branch. A message-less rejection must fall back to
+    // the tag_failed copy, not the load_failed verb.
+    mockApi.setSlotProjectGroup.mockRejectedValue(new Error('boom'))
+    const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('aidlc-migration')
+    renderCta('sess-x')
+    fireEvent.click(await screen.findByRole('button', { name: i18nT('components.coordinationPanel.tag_cta') }))
+    expect(await screen.findByText('boom')).toBeInTheDocument()
     promptSpy.mockRestore()
   })
 })

@@ -6,6 +6,7 @@ import ErrorNotice from './ErrorNotice'
 import { errMessage } from '../utils/thunkError'
 import { i18nT } from '../i18n/t'
 import type { ProjectPanelWorkItem } from '../types'
+import type { CoordinationProject } from './ProjectTagSubmenu'
 
 /** Theme class for a work item's state. */
 function stateClass(state: string): string {
@@ -215,28 +216,42 @@ interface CoordinationEmptyStateProps {
 /**
  * The untagged on-ramp. Rendered in place of the panel when the session has no
  * project group: it is the discovery surface that tells the user the feature
- * exists AND lets them turn it on in one click, rather than withholding the tab
- * entirely (which hid the feature from anyone who had not already tagged).
+ * exists AND lets them turn it on, rather than withholding the tab entirely
+ * (which hid the feature from anyone who had not already tagged).
  *
- * Create-and-tag is the single action: a native prompt collects a name (mirrors
- * ProjectTagSubmenu's minimal increment), then POSTs the tag. On success the
- * session's project_group_id lands via the slot stream and this view is
- * replaced by the live panel. We invalidate the same keys the ⋯-menu tagging
- * path does so the ⋯ submenu's project list and the slot list stay consistent.
+ * It offers BOTH tag actions the ⋯-menu ProjectTagSubmenu does: pick an
+ * existing project (the common "join my teammate's group" case), or create a
+ * new one by name. Offering only create — the earlier shape — silently made a
+ * user who meant to JOIN an existing group create a duplicate, name-colliding
+ * group of one, the exact opposite of "see who else is working on it". The
+ * existing-project list is read from the same ['coordination-projects'] query
+ * the ⋯ menu populates, so the two surfaces never disagree.
+ *
+ * On success the session's project_group_id lands via the slot stream and this
+ * view is replaced by the live panel. We invalidate the same keys the ⋯-menu
+ * tagging path does so the ⋯ submenu's project list and the slot list stay
+ * consistent.
  */
 export function CoordinationEmptyState({ slotKey }: CoordinationEmptyStateProps) {
   const queryClient = useQueryClient()
+  const { data: projectsResp } = useQuery({
+    queryKey: ['coordination-projects'],
+    queryFn: () => api.listCoordinationProjects(),
+  })
+  const projects: CoordinationProject[] = projectsResp?.projects ?? []
+
   const tag = useMutation({
-    mutationFn: (name: string) => api.setSlotProjectGroup(slotKey, { name }),
+    mutationFn: (target: { name: string } | { projectGroupId: string }) =>
+      api.setSlotProjectGroup(slotKey, target),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['coordination-projects'] })
       void queryClient.invalidateQueries({ queryKey: ['chat-slots'] })
     },
   })
 
-  const onTag = () => {
+  const onCreate = () => {
     const name = window.prompt(i18nT('components.coordinationPanel.tag_prompt'))
-    if (name != null && name.trim() !== '') tag.mutate(name.trim())
+    if (name != null && name.trim() !== '') tag.mutate({ name: name.trim() })
   }
 
   return (
@@ -247,18 +262,43 @@ export function CoordinationEmptyState({ slotKey }: CoordinationEmptyStateProps)
       </p>
       {tag.isError && (
         <p className="text-danger text-[12px]">
-          {errMessage(tag.error) || i18nT('components.coordinationPanel.load_failed')}
+          {errMessage(tag.error) || i18nT('components.coordinationPanel.tag_failed')}
         </p>
       )}
+
+      {/* Pick an EXISTING project — the join case. Only when some exist. */}
+      {projects.length > 0 && (
+        <div className="flex flex-col items-stretch gap-1 w-full max-w-[240px]">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted text-left">
+            {i18nT('components.coordinationPanel.join_existing')}
+          </span>
+          {projects.map(p => (
+            <button
+              key={p.id}
+              onClick={() => tag.mutate({ projectGroupId: p.id })}
+              disabled={tag.isPending}
+              title={p.name}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] cursor-pointer transition-colors text-text hover:bg-bg-hover bg-transparent border border-border disabled:opacity-50 disabled:cursor-default"
+            >
+              <Users size={12} className="shrink-0 text-accent" />
+              <span className="truncate text-left flex-1">{p.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Create a NEW project — always available. */}
       <button
-        onClick={onTag}
+        onClick={onCreate}
         disabled={tag.isPending}
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium cursor-pointer transition-colors bg-accent/15 text-accent hover:bg-accent/25 border-none disabled:opacity-50 disabled:cursor-default"
       >
         <FolderPlus size={13} className="shrink-0" />
         {tag.isPending
           ? i18nT('components.coordinationPanel.tagging')
-          : i18nT('components.coordinationPanel.tag_cta')}
+          : projects.length > 0
+            ? i18nT('components.coordinationPanel.tag_cta_new')
+            : i18nT('components.coordinationPanel.tag_cta')}
       </button>
     </div>
   )
