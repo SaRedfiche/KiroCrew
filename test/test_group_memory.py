@@ -99,6 +99,26 @@ class TestGroupMemoryStore:
         # get_context, which reads, likewise degrades to "" (no raise).
         assert s.get_context() == ""
 
+    def test_append_does_not_overwrite_an_unreadable_blob(self, store_root, monkeypatch):
+        # GPT BLOCK regression: append must NOT treat a present-but-unreadable
+        # blob as empty (that would overwrite/destroy prior memory with just the
+        # new entry). Only FileNotFound/NotADir count as empty; any other OSError
+        # propagates so the append fails loudly, leaving the stored blob intact.
+        s = GroupMemoryStore("grp-1")
+        s.write("irreplaceable prior context")
+
+        real_read_text = type(s._path).read_text
+
+        def _boom(self, *a, **k):
+            raise PermissionError("simulated transient unreadable memory.md")
+
+        monkeypatch.setattr(type(s._path), "read_text", _boom)
+        with pytest.raises(PermissionError):
+            s.append("new entry")
+        # Restore reads and confirm the prior blob was never overwritten.
+        monkeypatch.setattr(type(s._path), "read_text", real_read_text)
+        assert s.read() == "irreplaceable prior context"
+
     def test_get_context_marker_only_cap_returns_empty(self, store_root):
         # A cap too small to hold even the truncation marker yields "" rather
         # than a marker-only block (pure noise).

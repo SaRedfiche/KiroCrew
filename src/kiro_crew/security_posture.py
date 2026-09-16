@@ -1501,12 +1501,18 @@ _REDACTION_SINKS: tuple[tuple[str, str, str], ...] = (
         "Project-group shared memory reads",
         "dashboard/handlers/group_memory.py",
         "The stored project-group shared memory served by `GET /api/group-memory` "
-        "behind the `group_memory_read` tool. The blob is human/coordinator-authored "
-        "and re-injected into every tagged session's context, so a credential or "
-        "exfiltration URL a coordinator pasted into it would otherwise reach the "
-        "model verbatim on every read. The read handler runs the platform-aware "
-        "redaction chain on the text before the response leaves the backend, "
-        "matching the work-ledger read boundary.",
+        "behind the `group_memory_read` tool. The blob is human/coordinator-authored, "
+        "so a credential or exfiltration URL a coordinator pasted into it would "
+        "otherwise reach the tool result — and via it the model / dashboard / a "
+        "channel — verbatim. The read handler runs the platform-aware redaction "
+        "chain on the text before the response leaves the backend, matching the "
+        "work-ledger read boundary. NOTE the redaction boundary is this HTTP READ, "
+        "NOT the context-injection tier (`context.py`): that tier appends the raw "
+        "blob unredacted, exactly like the sibling global/preference/project memory "
+        "tiers it sits between — injection-time redaction is not this codebase's "
+        "boundary for memory content, and adding it here alone would diverge from "
+        "those tiers. The egress that is redacted is the tool read; the injected "
+        "copy is the same trust class as every other memory tier.",
     ),
 )
 

@@ -29,8 +29,12 @@ Read vs write authority (§12.6):
   (the conductor ledger does not record which group it serves), so a session
   that conducts another group and is merely tagged into this one also passes —
   acceptable under the single-user model (row 10: the human is the source of
-  truth; there is no adversarial cross-group writer to defend against). The
-  human writes through the dashboard, not this MCP surface.
+  truth; there is no adversarial cross-group writer to defend against). There is
+  NO browser/dashboard write route in this phase: both `/api/group-memory` routes
+  are MCP-only (a cookie caller gets 403 `internal_auth_required`), so the human
+  edits group memory by driving a coordinator session's `group_memory_write`
+  tool, not through a dashboard control. A first-class dashboard editor is a
+  later phase.
 
 Restricted (incognito / temporary / guest) sessions are refused: group memory is
 durable on-disk state, which those modes promise not to leave behind. A
