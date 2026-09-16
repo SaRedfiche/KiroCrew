@@ -155,13 +155,31 @@ async def test_append_keeps_prior_and_replace_overwrites():
         _req("POST", body={"text": "second", "mode": "append"}, sk=COORD)
     )
     stored = group_memory.GroupMemoryStore(GROUP).read()
-    assert "first" in stored and "second" in stored
+    # Exact separator form, not just substring presence — a no-separator
+    # concatenation ("firstsecond") would satisfy `in` but is a regression.
+    assert stored == "first\n\nsecond"
     await routes.api_group_memory_write(
         _req("POST", body={"text": "only", "mode": "replace"}, sk=COORD)
     )
     stored = group_memory.GroupMemoryStore(GROUP).read()
     assert stored == "only"
     assert "first" not in stored
+
+
+async def test_append_past_blob_cap_is_400(monkeypatch):
+    # An append whose result exceeds the store's total-blob cap is refused with
+    # a distinct blob_too_large 400 (not invalid_group), and the prior blob
+    # survives.
+    monkeypatch.setattr(group_memory, "GROUP_MEMORY_BLOB_MAX", 20)
+    _tag(COORD, GROUP)
+    work_ledger.ensure_conductor(_coord_effective(), depth=0, parent_item=None)
+    await routes.api_group_memory_write(_req("POST", body={"text": "x" * 15}, sk=COORD))
+    resp = await routes.api_group_memory_write(
+        _req("POST", body={"text": "y" * 15, "mode": "append"}, sk=COORD)
+    )
+    assert resp.status == 400
+    assert b"blob_too_large" in resp.body
+    assert group_memory.GroupMemoryStore(GROUP).read() == "x" * 15
 
 
 # ── refusals ────────────────────────────────────────────────────────────────

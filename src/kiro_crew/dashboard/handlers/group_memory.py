@@ -23,9 +23,14 @@ Read vs write authority (§12.6):
 * **write** — the human, and a COORDINATOR session. "Coordinator" is the same
   derivation the project panel uses: a session that owns a readable conductor
   work-ledger (``work_ledger.read_conductor`` on its effective key). A plain
-  member session may read but not write, so one worker cannot rewrite the
-  project context every sibling then ingests. The human writes through the
-  dashboard, not this MCP surface.
+  member session (one with no work ledger) may read but not write, so an
+  ordinary worker cannot rewrite the project context every sibling then ingests.
+  NOTE the enforced predicate is "owns a work ledger", not "conducts THIS group"
+  (the conductor ledger does not record which group it serves), so a session
+  that conducts another group and is merely tagged into this one also passes —
+  acceptable under the single-user model (row 10: the human is the source of
+  truth; there is no adversarial cross-group writer to defend against). The
+  human writes through the dashboard, not this MCP surface.
 
 Restricted (incognito / temporary / guest) sessions are refused: group memory is
 durable on-disk state, which those modes promise not to leave behind. A
@@ -62,10 +67,6 @@ logger = logging.getLogger(__name__)
 #: missing mode defaults to ``append`` — the safe default for a coordinator
 #: adding project context, since it cannot silently discard the accumulated blob.
 _DEFAULT_WRITE_MODE = "append"
-
-#: A visible separator between appended entries so the injected blob reads as
-#: distinct notes rather than one run-on paragraph.
-_APPEND_SEPARATOR = "\n\n"
 
 
 def _sel():
@@ -276,6 +277,11 @@ async def api_group_memory_write(request: web.Request) -> web.Response:
 
     try:
         stored_len = await asyncio.to_thread(_apply_write, group_id, text, mode)
+    except group_memory.GroupMemoryBlobTooLarge as exc:
+        # Distinct from invalid_group: the id is fine, the RESULT is too big.
+        # Refused (not truncated) so the coordinator prunes with mode=replace.
+        _audit(effective_key, "group_memory_write", "denied", resources=group_id, error=str(exc))
+        return _refuse(400, "blob_too_large", str(exc))
     except group_memory.GroupMemoryError as exc:
         _audit(effective_key, "group_memory_write", "denied", resources=group_id, error=str(exc))
         return _refuse(400, "invalid_group", "the project group id is not usable")
@@ -290,15 +296,14 @@ async def api_group_memory_write(request: web.Request) -> web.Response:
 def _apply_write(group_id: str, text: str, mode: str) -> int:
     """Apply an append/replace write and return the new stored length.
 
-    Append reads the current blob and concatenates with a visible separator;
-    replace overwrites. Both go through the store's atomic write. Runs off the
-    event loop (blocking file I/O).
+    Delegates to the store, whose ``append``/``write`` both hold the per-group
+    advisory lock and write atomically (append is a locked read-modify-write, so
+    two concurrent coordinator appends serialise instead of losing an entry).
+    Runs off the event loop (blocking file I/O).
     """
     store = group_memory.GroupMemoryStore(group_id)
     if mode == "replace":
-        new_text = text
-    else:  # append (default)
-        existing = store.read().rstrip()
-        new_text = (existing + _APPEND_SEPARATOR + text) if existing else text
-    store.write(new_text)
-    return len(new_text)
+        store.write(text)
+        return len(text)
+    # append (default) — locked read-modify-write with the total-blob cap.
+    return len(store.append(text))

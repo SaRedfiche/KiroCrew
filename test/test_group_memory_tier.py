@@ -90,11 +90,14 @@ class TestGroupMemoryTier:
         assert "[PROJECT GROUP MEMORY" in ctx
 
     def test_precedence_after_global_memory_before_lessons(self, tmp_path, group_root):
-        # The tier sits between the memory block and the lessons block. Seed a
-        # lesson and group memory, then assert ordering by index.
+        # The tier sits AFTER the global-memory block and BEFORE the lessons
+        # block. Seed a global-memory preference, a lesson, and group memory,
+        # then assert BOTH ordering halves by index.
         from kiro_crew.learn import Lesson
 
         builder = _builder(tmp_path)
+        builder.memory.init()
+        builder.memory.add_preference("Prefer small, granular commits.")
         builder.lessons.save(
             Lesson(
                 ts="2026-01-01T00:00:00Z",
@@ -105,7 +108,13 @@ class TestGroupMemoryTier:
         GroupMemoryStore(_GROUP).write(_BODY)
         ctx = builder.build_session_context(project_group_id=_GROUP)
         gi = ctx.index("[PROJECT GROUP MEMORY")
-        # Lessons block header appears after the group tier.
+        # Global memory block must render BEFORE the group tier (the untested
+        # half the original test omitted — precedence-on-conflict wants session/
+        # global memory to outrank shared project context).
+        mi = ctx.find("[Memory")
+        assert mi != -1, "expected the seeded preference to render a memory block"
+        assert mi < gi, "global memory must be injected before group memory"
+        # And the group tier before session lessons.
         li = ctx.find("[Learned corrections")
         assert li != -1, "expected the seeded lesson to render a lessons block"
         assert gi < li, "group memory must be injected before session lessons"
