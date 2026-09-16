@@ -175,17 +175,13 @@ class GroupMemoryStore:
         """
         cap = GROUP_MEMORY_BLOB_MAX if blob_max is None else blob_max
         with self._locked():
-            # NOT self.read(): that degrades EVERY OSError to "" so the injection
-            # tier can self-defer, but here an unreadable-yet-present blob must
-            # NOT be treated as empty — doing so would overwrite (destroy) the
-            # prior memory with just the new entry. Read directly, treating only
-            # "the file isn't there" (FileNotFoundError / a torn parent) as empty
-            # and letting any other OSError (PermissionError, I/O error) propagate
-            # so the append fails loudly instead of silently discarding content.
-            try:
-                existing = self._path.read_text(encoding="utf-8").rstrip()
-            except (FileNotFoundError, NotADirectoryError):
-                existing = ""
+            # read() swallows ONLY FileNotFound/NotADir (first run / torn parent)
+            # and propagates any other OSError — exactly the semantics append
+            # needs: a present-but-unreadable blob must NOT read as empty (that
+            # would overwrite/destroy the prior memory with just the new entry),
+            # so the PermissionError/I/O error propagates and the append fails
+            # loud instead. The whole read+write runs under the lock.
+            existing = self.read().rstrip()
             new_text = (existing + _APPEND_SEPARATOR + text) if existing else text
             if cap > 0 and len(new_text) > cap:
                 raise GroupMemoryBlobTooLarge(
