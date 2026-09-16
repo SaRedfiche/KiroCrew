@@ -10,7 +10,7 @@ import {
 } from './panelTabRegistry'
 
 /** Singleton "view" tabs (opened from the + menu, one instance each). */
-export type ViewKind = 'changes' | 'issues' | 'links' | 'files' | 'artifacts' | 'subagents' | 'workflows' | 'logs' | 'crewlog' | 'context' | 'side' | 'browser' | 'git' | 'summary' | 'pins'
+export type ViewKind = 'changes' | 'issues' | 'links' | 'files' | 'artifacts' | 'subagents' | 'workflows' | 'logs' | 'crewlog' | 'context' | 'side' | 'browser' | 'git' | 'summary' | 'pins' | 'coordination'
 /** All tab kinds: singleton views + on-demand document/terminal tabs. */
 /** `app` hosts an MCP App (a sandboxed iframe with a live JSON-RPC bridge).
  *  It is deliberately a TabKind and NOT a ViewKind: SidePanel unmounts
@@ -85,6 +85,7 @@ export const VIEW_DATA_SOURCE: Record<ViewKind, 'slot' | 'chat-transcript'> = {
   browser: 'slot',
   git: 'slot',
   summary: 'slot',
+  coordination: 'slot',
 }
 
 /** The views a host without ChatPage's transcript indexes cannot feed. */
@@ -192,6 +193,7 @@ const VIEW_TITLE_KEY: Record<ViewKind, string> = {
   git: 'hooks.usePanelTabs.git',
   summary: 'hooks.usePanelTabs.summary',
   pins: 'hooks.usePanelTabs.pins',
+  coordination: 'hooks.usePanelTabs.coordination',
 }
 
 /** Localised strip label for a singleton view. */
