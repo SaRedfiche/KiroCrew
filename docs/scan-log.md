@@ -534,3 +534,55 @@ follow-ups), GPT doc-consistency BLOCK adjudicated as the stop-criterion
 terminating condition (all its substantive findings fixed; remaining items are
 docstring/scan-log text, corrected). Both gates addressed. The user merges.
 
+---
+
+## Coordination side-panel UI — §12.6 frontend (2026-09-16)
+
+Scope: `67a0e7c48..c49f22f8b` (12 files, frontend-only — React/TS + i18n JSON +
+a Playwright capture harness; no Python, no IaC, no dependency/lockfile changes).
+Adds the Coordination Chat side-panel view rendering `GET /api/projects/{id}/panel`
+(header · members · work rollup · collisions), the `getProjectPanel` API method +
+`ProjectPanel` types, a `coordination` ViewKind wired through the tab tables,
+`project_group_id` threaded from the slot row (`types/index.ts:1034`), i18n keys,
+and vitest coverage.
+
+**ASH:** GO — 7 scanners (bandit, checkov, detect-secrets, grype, npm-audit,
+semgrep, syft), 0 attributable findings. cdk-nag/cfn-nag/opengrep MISSING (deps
+not installed). Transitive dev-dependency npm advisories are pre-existing
+`node_modules` noise — the diff adds no dependencies.
+
+**Holmes:** not run for this frontend-only diff — no regex/secrets/IaC/data-handling
+in the changed TS/JSON; the §12.6 backend already cleared Holmes last session
+(1 pre-existing regex_dos in context.py, unrelated to this diff).
+
+**Adversarial crew (6 axes — Correctness, Security, Tests, Docs-honesty,
+AI-necessity, UX):** NO-GO → GO. Security GO (auth mirrors listCoordinationProjects,
+no XSS sink — PR is plain text not an href, no secrets, harness loopback-only).
+AI-necessity GO (fully deterministic fetch+JSX, zero LLM). Fixed the convergent
+Highs: Correctness — `data.project.name` crash on a malformed 200 (defensive
+optional chain); UX — Coordination offered to untagged sessions was a dead end
+(withheld via effectiveHiddenViews, mirrors the Summary gate) and the members-row
+title overflowed the narrow panel (flex-1 min-w-0). Fixed Mediums: empty-state
+copy now names the action; collision participant list wraps. Nits: casing-robust
+state pills, refresh busy state, no error+stale co-render. Tests strengthened
+(section-presence floor, collision-key fallback, plural boundary, malformed-body
+guard, error-keeps-data-out, withhold/appear coverage).
+
+**Multimodel panel (3 rounds):** Opus PASS every round. GPT BLOCK r1→r2 on the same
+whole-system-honesty axis (the header reported "Loading…" for a failed/malformed
+completed load) — fixed by gating the header label on `isLoading` (loading only
+while pending; a resolved-but-nameless or errored state shows `load_failed_short`).
+r3 GO: GPT PASS, Opus PASS, First-Principles/Design/UX CONCERNS (non-blocking).
+
+**Docs-honesty correction:** the commit prose "other 10 locales filled by the
+ship-it i18n step" (897efb79) was inaccurate — the `coordinationPanel` keys exist
+only in `en.manual.json` + `en-XA.json`. The other 10 real locales are NOT yet
+translated; that is a documented pending step (ship-it i18n per-locale sweep),
+recorded here rather than left as a false "filled" claim.
+
+**Paired verdict @ `c49f22f8b`:**
+crew NO-GO→GO (all Correctness/UX Highs + Mediums fixed) |
+panel GO (GPT PASS, Opus PASS, First-Principles/Design/UX CONCERNS — non-blocking).
+Both gates GO. Documented follow-ups (not this gate): loading skeleton, an inline
+tag-CTA on the untagged empty state, the manually-synced ViewKind membership
+tables, and the focus-return poll burst. The user merges.
