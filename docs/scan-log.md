@@ -479,17 +479,25 @@ slot, never a request arg); and GC hooked into `ProjectStore.delete_project`.
 | Adversarial crew (6 axes, on `1fb07eb19`←`57febe74e`) | GO after fixes | NO-GO round: Correctness H1 (unreadable-blob tier crash) + Data-integrity H (deterministic `.tmp` name / lock-free append lost-update) + M1 (unbounded append blob) + Security M (coordinator-class-vs-group wording) + Nits. ALL fixed: `read()` catches OSError; writes use `atomic_write` under a per-group flock; locked append with `GROUP_MEMORY_BLOB_MAX` refusal; wording/typo/marker-cap corrected. Security/AI-necessity axes GO (deterministic; unforgeable server-side group id). Tests axis GO-with-followups (precedence test now asserts both halves). |
 | Multimodel panel (`docs/scan-group-memory-1fb07eb.md`) | GO after fixes | NO-GO round: GPT 3 BLOCKs — (1) append over `read()` could overwrite an unreadable blob = data loss; (2) sink rationale claimed the injection path redacts when it does not; (3) docstring claimed a human dashboard write path that does not exist. Opus PASS. All 3 fixed: append reads directly under the lock (only FileNotFound=empty, other OSError propagates); sink rationale corrected to name the HTTP-read boundary (injection is unredacted, same as sibling memory tiers); docstring corrected to coordinator-only MCP. Design/UX CONCERNS = `prompt()` (documented Phase-4 follow-up) + blob-cap message (reworded to user vocabulary). |
 
-**First-Principles BLOCK — accepted follow-up, NOT fixed this gate.** First-Principles
-flagged `ProjectStore.observe_repo` + the panel `repos` field + `CollisionIndex.distinct_session_count`
-as dead-code-behind-a-completeness-claim (0 production callers; panel ships `[]`).
-This is a legitimate SUBTRACTION finding on **pre-existing P1 code** (already gated
-GO and shipped in prior sessions), not on the §12.6 change under review. Removing
-`repos` is an on-disk `projects.json` schema change that `Project.from_dict`'s
-exact-shape validation would then reject for existing files — a migration hazard,
-not the cheap subtraction First-Principles assumes. Deferred as a documented
-follow-up (remove the unused rollup + counter in a dedicated P1-cleanup change with
-a `from_dict` back-compat path) rather than widening the §12.6 gate into shipped P1
-internals. The dead code is `[]`-either-way — no correctness/security/data risk.
+**First-Principles / GPT / Design convergent finding — FIXED (subtraction).**
+All three lanes flagged `ProjectStore.observe_repo` + the panel `repos` field +
+`CollisionIndex.distinct_session_count` as dead-code-behind-a-completeness-claim
+(0 production callers; panel shipped `[]`). Removed all three, plus the
+"auto-derived rollup" module-docstring paragraph and the stale `_save` nested-
+rollback note. The `repos` removal changes the on-disk `projects.json` shape, so
+`Project.from_dict` was given a BACK-COMPAT path (a legacy `repos` list key is
+tolerated and dropped on load; any OTHER extra key is still corruption) — Design's
+"schema one-way door" Watch, closed by loosening `from_dict` BEFORE removing the
+field, exactly as it prescribed. Tests updated: legacy-repos-loads + unknown-key-
+still-corrupt, panel/list payloads assert no `repos`, collision one-row test
+rewritten on `contested_files`.
+
+**Design/UX CONCERNS (accepted follow-ups, not this gate):** `prompt()` for
+project creation (documented Phase-4 inline-input replacement); the `bus.push`
+notify sharing the flush failure domain with the panel flags (accepted Phase-1
+risk, revisit trigger = coordinator dispatch threshold); the notify body's
+"Open the project panel" pointing at a route with no UI page yet.
+
 
 **Paired verdict @ crew+panel-reviewed `57febe74e`/`1fb07eb19` → fixes on `1fb07eb19` (+ this round):**
 crew NO-GO→GO (H1/H+M1/Security-M fixed) | panel NO-GO→GO (GPT 3 BLOCKs fixed, Opus PASS,

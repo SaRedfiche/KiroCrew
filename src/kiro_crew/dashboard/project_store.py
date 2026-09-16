@@ -2,7 +2,7 @@
 
 A *project* groups sibling chat sessions that work the same project. A session
 carries an opaque ``project_group_id`` (see ``_ChatSlot.project_group_id``);
-this store holds the record each id points at: ``{id, name, repos[]}``.
+this store holds the record each id points at: ``{id, name}``.
 
 Deliberately small. It mirrors the ``crons.json`` durability pattern — a
 cross-process advisory ``flock``, a content-digest sync that detects an external
@@ -30,10 +30,6 @@ Design decisions (from the peer-coordination design, §4.1/§4.6/§9):
   unclosable TOCTOU (the ``chat_folders`` delete path reached the same
   conclusion). A dangling ``project_group_id`` is rendered under an
   "unknown project" bucket by readers, never a crash.
-* **``repos[]`` is an auto-derived rollup**, append-only with manual prune — not
-  a list the user must curate (that would re-import the filing-discipline burden
-  a prior design was rejected for). :meth:`observe_repo` adds a repo id a tagged
-  session's worktree yielded, deduped, order-preserving.
 """
 
 from __future__ import annotations
@@ -43,7 +39,7 @@ import json
 import logging
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
@@ -90,44 +86,45 @@ class Project:
 
     id: str
     name: str
-    repos: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
             "id": self.id,
             "name": self.name,
-            "repos": list(self.repos),
         }
 
-    _FIELDS = ("id", "name", "repos")
+    _FIELDS = ("id", "name")
 
     @classmethod
     def from_dict(cls, d: dict) -> "Project":
-        """Rehydrate a record WE wrote, validating its exact shape.
+        """Rehydrate a record WE wrote, validating its shape.
 
         The file is machine-owned (see ``ProjectStoreCorrupt``): our writer emits
-        exactly ``{id: str, name: str (non-empty id), repos: list[str]}`` and
-        nothing else. Anything off that shape — a missing field, a wrong type, OR
-        an unexpected key — is corruption or a bug, not input to coerce, so we
-        raise ``ProjectStoreCorrupt``. We deliberately do NOT tolerate unknown
-        keys: there is no schema-evolution writer that produces them, so
-        accepting them would only mask a corrupt or foreign record.
+        exactly ``{id: str (non-empty), name: str}``. A missing required field or
+        a wrong type is corruption, not input to coerce, so we raise
+        ``ProjectStoreCorrupt``.
+
+        BACK-COMPAT: a legacy ``repos`` key (a list — the removed auto-rollup
+        field) is TOLERATED and dropped, so a ``projects.json`` written before the
+        field was removed still loads. That legacy key is the ONE tolerated
+        extra; any other unexpected key is still corruption. (When the last
+        legacy store has aged out, tighten this back to an exact-shape check.)
         """
         if (
             not isinstance(d, dict)
-            or set(d) != set(cls._FIELDS)
+            or not set(cls._FIELDS).issubset(d)
+            or set(d) - set(cls._FIELDS) - {"repos"}
             or not isinstance(d["id"], str)
             or not d["id"]
             or not isinstance(d["name"], str)
-            or not isinstance(d["repos"], list)
-            or not all(isinstance(r, str) for r in d["repos"])
+            or ("repos" in d and not isinstance(d["repos"], list))
         ):
             raise ProjectStoreCorrupt(f"malformed project record: {d!r}")
-        return cls(id=d["id"], name=d["name"], repos=list(d["repos"]))
+        return cls(id=d["id"], name=d["name"])
 
 
 class ProjectStore:
-    """Durable ``{id, name, repos[]}`` records with flock + atomic write."""
+    """Durable ``{id, name}`` records with flock + atomic write."""
 
     def __init__(self, base_dir: Path | None = None) -> None:
         self._dir = Path(base_dir) if base_dir is not None else config_dir()
@@ -224,10 +221,8 @@ class ProjectStore:
         propagates, so a failed save leaves no uncommitted mutation cached (a
         retry would otherwise see it as already-applied and never persist it).
 
-        ``rollback`` restores only the top-level list. A nested-field mutation
-        (``observe_repo``'s ``rec.repos.append``) is on a shared ``Project`` the
-        snapshot still holds by reference, so its caller reverts that nested
-        state in its own ``except`` — ``observe_repo`` does.
+        ``rollback`` restores the top-level list, which is the whole of a
+        mutation now that records carry no nested collections.
         """
         payload = json.dumps(
             {"projects": [p.to_dict() for p in self._projects]},
@@ -291,33 +286,6 @@ class ProjectStore:
             self._projects.append(record)
             self._save(rollback=snapshot)
             return record
-
-    def observe_repo(self, project_id: str, repo_id: str) -> bool:
-        """Append a repo id to a project's derived ``repos[]`` rollup.
-
-        Append-only + deduped + order-preserving. No-op (returns False) when the
-        project is absent or the repo is already listed. This is how ``repos[]``
-        auto-populates as tagged sessions join — never a user-curated list.
-        """
-        repo = (repo_id or "").strip()
-        if not repo:
-            return False
-        with self._file_lock():
-            self._sync_for_write()
-            rec = next((p for p in self._projects if p.id == project_id), None)
-            if rec is None or repo in rec.repos:
-                return False
-            repos_snapshot = list(rec.repos)  # nested-list rollback (see _save)
-            rec.repos.append(repo)
-            try:
-                self._save(rollback=list(self._projects))
-            except Exception:
-                # _save restored the _projects pointer, but the nested
-                # rec.repos.append is on the shared Project object — undo it too
-                # so a failed save leaves NO uncommitted mutation cached.
-                rec.repos[:] = repos_snapshot
-                raise
-            return True
 
     def delete_project(self, project_id: str) -> bool:
         """Delete a project. ALWAYS proceeds — never refuses on live members.

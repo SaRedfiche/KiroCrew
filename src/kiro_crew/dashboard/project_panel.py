@@ -197,7 +197,7 @@ async def api_project_panel(request: web.Request) -> web.Response:
                     }
                 )
         return {
-            "project": {"id": record.id, "name": record.name, "repos": list(record.repos)},
+            "project": {"id": record.id, "name": record.name},
             "sessions": snap,
             "collisions": collisions,
             "work": work,

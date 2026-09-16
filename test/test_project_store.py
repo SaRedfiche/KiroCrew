@@ -2,7 +2,7 @@
 
 Covers the durability + contract properties the design and gate require:
 idempotent-by-id create, concurrent-create dedup (TOCTOU), delete-always-
-proceeds, repos[] auto-derive (append-only, deduped), fail-loud on a corrupt
+proceeds, legacy-repos-key back-compat on load, fail-loud on a corrupt
 (present-but-unparseable) file, and transactional-save rollback on a write
 failure. Uses a tmp_path base_dir like the cron-store tests.
 """
@@ -26,7 +26,7 @@ class TestCreate:
     def test_create_persists(self, tmp_path):
         store = ProjectStore(base_dir=tmp_path)
         rec = store.create_project("My Project", project_id="grp-mp")
-        assert rec.id == "grp-mp" and rec.name == "My Project" and rec.repos == []
+        assert rec.id == "grp-mp" and rec.name == "My Project"
         # Reload from disk in a fresh store instance: it round-trips.
         assert ProjectStore(base_dir=tmp_path).get_project("grp-mp").name == "My Project"
 
@@ -112,32 +112,39 @@ class TestConcurrentCreate:
         assert [p.id for p in ProjectStore(base_dir=tmp_path).list_projects()] == ["grp-x"]
 
 
-class TestReposAutoDerive:
-    def test_observe_repo_appends_deduped(self, tmp_path):
-        store = ProjectStore(base_dir=tmp_path)
-        rec = store.create_project("P", project_id="grp-r")
-        assert store.observe_repo("grp-r", "git@host:org/repo-a.git") is True
-        assert store.observe_repo("grp-r", "git@host:org/repo-b.git") is True
-        # Duplicate is a no-op, order preserved.
-        assert store.observe_repo("grp-r", "git@host:org/repo-a.git") is False
-        repos = store.get_project("grp-r").repos
-        assert repos == ["git@host:org/repo-a.git", "git@host:org/repo-b.git"]
+class TestLegacyReposBackCompat:
+    def test_legacy_repos_key_still_loads_and_is_dropped(self, tmp_path):
+        # The removed auto-rollup ``repos`` field: a projects.json written before
+        # its removal must still load (from_dict tolerates + drops the legacy
+        # key), so an existing store is not corrupted on upgrade.
+        import json
 
-    def test_observe_repo_absent_project_is_noop(self, tmp_path):
+        (tmp_path / "projects.json").write_text(
+            json.dumps(
+                {"projects": [{"id": "grp-legacy", "name": "Old", "repos": ["r1", "r2"]}]}
+            ),
+            encoding="utf-8",
+        )
         store = ProjectStore(base_dir=tmp_path)
-        assert store.observe_repo("nonexistent", "git@host:x.git") is False
+        rec = store.get_project("grp-legacy")
+        assert rec is not None and rec.name == "Old"
+        assert not hasattr(rec, "repos")
+        # And a fresh save drops the legacy key entirely.
+        store.create_project("New", project_id="grp-new")
+        reloaded = json.loads((tmp_path / "projects.json").read_text())
+        assert all("repos" not in r for r in reloaded["projects"])
 
-    def test_observe_repo_empty_id_is_noop(self, tmp_path):
-        store = ProjectStore(base_dir=tmp_path)
-        store.create_project("P", project_id="grp-r")
-        assert store.observe_repo("grp-r", "   ") is False
-        assert store.get_project("grp-r").repos == []
+    def test_unknown_extra_key_is_still_corruption(self, tmp_path):
+        # Only the legacy ``repos`` key is tolerated; any OTHER unexpected key is
+        # still corruption (fail loud).
+        import json
 
-    def test_repos_survive_reload(self, tmp_path):
-        store = ProjectStore(base_dir=tmp_path)
-        store.create_project("P", project_id="grp-r2")
-        store.observe_repo("grp-r2", "remote-1")
-        assert ProjectStore(base_dir=tmp_path).get_project("grp-r2").repos == ["remote-1"]
+        (tmp_path / "projects.json").write_text(
+            json.dumps({"projects": [{"id": "g", "name": "N", "bogus": 1}]}),
+            encoding="utf-8",
+        )
+        with pytest.raises(ProjectStoreCorrupt):
+            ProjectStore(base_dir=tmp_path)
 
 
 class TestDelete:
@@ -261,10 +268,11 @@ class TestDurability:
         skip or coerce. A validated creation interface is the only writer."""
         bad_records = [
             {"name": "no-id"},                       # missing id
-            {"id": "x"},                             # missing name (and repos)
-            {"id": 5, "name": "n", "repos": []},     # non-str id
-            {"id": "x", "name": "n", "repos": 5},    # non-list repos
-            {"id": "x", "name": "n", "repos": [3]},  # non-str repo entry
+            {"id": 5, "name": "n"},                  # non-str id
+            {"id": "", "name": "n"},                 # empty id
+            {"id": "x", "name": 7},                  # non-str name
+            {"id": "x", "name": "n", "bogus": 1},    # unknown key (not the legacy repos)
+            {"id": "x", "name": "n", "repos": 5},    # legacy repos key present but non-list
         ]
         for rec in bad_records:
             (tmp_path / "projects.json").write_text(
@@ -337,20 +345,6 @@ class TestSaveRollback:
         store.create_project("New", project_id="grp-2")
         assert {p.id for p in ProjectStore(base_dir=tmp_path).list_projects()} == {"grp-1", "grp-2"}
 
-    def test_observe_repo_rolls_back_nested_on_save_failure(self, tmp_path, monkeypatch):
-        store = ProjectStore(base_dir=tmp_path)
-        store.create_project("P", project_id="grp-1")
-        store.observe_repo("grp-1", "repo-a")
-        self._break_atomic_write(monkeypatch)
-        with pytest.raises(OSError):
-            store.observe_repo("grp-1", "repo-b")
-        # The nested rec.repos.append must be undone too, not just the list.
-        assert store.get_project("grp-1").repos == ["repo-a"]
-        monkeypatch.undo()
-        store.observe_repo("grp-1", "repo-b")
-        reloaded = ProjectStore(base_dir=tmp_path).get_project("grp-1")
-        assert reloaded.repos == ["repo-a", "repo-b"]
-
     def test_delete_rolls_back_on_save_failure(self, tmp_path, monkeypatch):
         store = ProjectStore(base_dir=tmp_path)
         store.create_project("P", project_id="grp-1")
@@ -365,20 +359,27 @@ class TestSaveRollback:
 
 class TestProjectDataclass:
     def test_from_dict_round_trips_what_we_wrote(self):
-        rec = Project(id="x", name="N", repos=["a", "b"])
+        rec = Project(id="x", name="N")
         assert Project.from_dict(rec.to_dict()) == rec
 
+    def test_from_dict_tolerates_legacy_repos_key(self):
+        # Back-compat: a pre-removal record with a ``repos`` list still loads
+        # (the key is dropped), so an existing projects.json is not corrupted.
+        rec = Project.from_dict({"id": "x", "name": "N", "repos": ["a", "b"]})
+        assert rec == Project(id="x", name="N")
+        assert not hasattr(rec, "repos")
+
     def test_from_dict_rejects_unknown_keys(self):
-        # Exact-shape contract: our writer emits only {id,name,repos}. An extra
-        # key means the record is corrupt or foreign, not a version we produced.
+        # Only the legacy ``repos`` key is tolerated; any OTHER extra key means
+        # the record is corrupt or foreign, not a version we produced.
         with pytest.raises(ProjectStoreCorrupt):
-            Project.from_dict({"id": "x", "name": "N", "repos": [], "extra": 1})
+            Project.from_dict({"id": "x", "name": "N", "extra": 1})
 
     def test_from_dict_rejects_malformed(self):
         # Machine-owned schema: a record that isn't the shape we write is
         # corruption, not input to coerce.
-        for bad in ({"name": "no-id"}, {"id": 5, "name": "n", "repos": []},
+        for bad in ({"name": "no-id"}, {"id": 5, "name": "n"},
                     {"id": "x", "name": "n", "repos": "nope"},
-                    {"id": "", "name": "n", "repos": []}):
+                    {"id": "", "name": "n"}):
             with pytest.raises(ProjectStoreCorrupt):
                 Project.from_dict(bad)

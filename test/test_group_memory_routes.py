@@ -125,6 +125,21 @@ async def test_member_reads_what_a_coordinator_wrote():
     assert "us-west-2" in resp.body.decode()
 
 
+async def test_read_returns_503_when_blob_unreadable(monkeypatch):
+    # An unreadable blob is a real failure, not a truthful "empty": the read
+    # handler must 503 read_failed, NOT report HTTP 200 empty (status artefact).
+    _tag(MEMBER, GROUP)
+    group_memory.GroupMemoryStore(GROUP).write("stored")
+
+    def _boom(*a, **k):
+        raise PermissionError("simulated unreadable memory.md")
+
+    monkeypatch.setattr("pathlib.Path.read_text", _boom)
+    resp = await routes.api_group_memory_get(_req("GET", sk=MEMBER))
+    assert resp.status == 503
+    assert b"read_failed" in resp.body
+
+
 # ── write: coordinator only ────────────────────────────────────────────────
 
 

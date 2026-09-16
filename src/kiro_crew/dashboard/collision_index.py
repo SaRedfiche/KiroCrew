@@ -166,19 +166,6 @@ class CollisionIndex:
                 out.append((key, frozenset(sessions)))
         return out
 
-    def distinct_session_count(
-        self, key: FileKey, *, live_sessions: set[str], now: float | None = None
-    ) -> int:
-        """Distinct LIVE sessions contending ``key`` within the window. Used by
-        the notify path's contested-ness suppression threshold (design §4.4)."""
-        clock = time.time() if now is None else now
-        cutoff = clock - self._window
-        with self._lock:
-            rows = self._by_key.get(key)
-            if not rows:
-                return 0
-            return len({e.session for e in rows if e.ts >= cutoff and e.session in live_sessions})
-
     # ── maintenance ─────────────────────────────────────────────────────────
 
     def prune(self, *, now: float | None = None) -> None:

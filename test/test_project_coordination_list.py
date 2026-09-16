@@ -60,11 +60,9 @@ class TestCoordinationList:
 
     @pytest.mark.asyncio
     async def test_record_shape_is_id_and_name_only(self, tmp_path):
-        # The list payload is {id, name} only — no repos rollup (the per-project
-        # repos view lives on the panel route; the pick-list never renders it).
+        # The list payload is {id, name} only (the pick-list never renders more).
         state = _state(tmp_path)
         state.projects.create_project("Alpha", project_id="grp-1")
-        state.projects.observe_repo("grp-1", "repo-x")
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.get("/api/projects/coordination")
             data = await resp.json()
