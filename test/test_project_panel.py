@@ -354,6 +354,46 @@ class TestProjectPanelWorkRollup:
         assert data["work"] == []
 
     @pytest.mark.asyncio
+    async def test_bootstrapped_ledger_with_zero_entries_is_not_a_coordinator(
+        self, tmp_path, monkeypatch
+    ):
+        # The behavioral contract of the fold switch (crew-caught MEDIUM, gate
+        # round 1): the panel now marks a coordinator by the crew-log ``work``
+        # fold's header carrying RECORDED entries (``entries`` truthy), NOT by the
+        # mere existence of a cache header. A ledger that ``ensure_conductor``
+        # bootstrapped but that has not yet committed its first ``work/recorded``
+        # entry has a header with ``entries == 0`` — and is deliberately NOT a
+        # coordinator here, agreeing by construction with
+        # ``work_ledger.rebuild_from_projection`` (which gates on the identical
+        # ``not header.get("entries")`` predicate and rebuilds nothing). The old
+        # ``read_conductor is not None`` test flagged this transient
+        # bootstrapped-but-unrecorded window as a coordinator; the fold test does
+        # not. This pins that intended divergence, which the ``entries: len+1``
+        # stub in ``_patch_ledger`` cannot express.
+        from kiro_crew.crew_log import projection as _projection
+
+        state = _state(tmp_path)
+        state.projects.create_project("P", project_id="grp-1")
+        coord = _slot("chat-coord", "grp-1")
+        state._slots = {"chat-coord": coord}
+
+        class _Proj:
+            value = {"conductor": {"slot_key": "dashboard:chat-coord", "entries": 0}, "items": []}
+
+        monkeypatch.setattr(
+            _projection, "read_slot_projection", lambda *a, **k: _Proj()
+        )
+        from kiro_crew.dashboard import project_panel
+
+        monkeypatch.setattr(project_panel.work_ledger, "_bound_workers", lambda _sk: ())
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.get("/api/projects/grp-1/panel")
+            data = await resp.json()
+        assert "is_coordinator" not in data["sessions"][0]
+        assert data["work"] == []
+
+    @pytest.mark.asyncio
     async def test_multiple_conductors_attribute_items_per_coordinator(self, tmp_path, monkeypatch):
         # Two coordinators in one project: work[] accumulates across both and
         # each row's coordinator is its own effective key.
