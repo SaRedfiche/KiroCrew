@@ -171,24 +171,48 @@ async def api_project_panel(request: web.Request) -> web.Response:
         # the coordinator id, and the worker non-leak set all use it.
         project_session_keys = {r["session"] for r in snap}
         work: list[dict] = []
+        # Function-scope import, not module-scope: this module is loaded at boot
+        # by routes/sessions.py, and a top-level crew_log import would load the
+        # crew-log storage subsystem on a flag-off launch — the exact boot-path
+        # invariant work_ledger.py observes and test_crew_log_emit.py pins.
+        from kiro_crew.crew_log.projection import read_slot_projection
+
         for row in snap:
             sk = row["session"]
-            conductor = work_ledger.read_conductor(sk)
-            if conductor is None:
+            # Read the crew-log ``work`` fold — the ONE authoritative shape — rather
+            # than the work-ledger cache (read_conductor / list_work_items). The
+            # cache is itself a materialization of this same fold
+            # (work_ledger.rebuild_from_projection), so the panel and the conductor
+            # tools agree by construction and the panel is no longer a second
+            # reader-shape over the cache. ``also_slots`` names the bound workers the
+            # board's own entries may not yet name (bound before the board was
+            # recorded); it is the cheap cached-binding glob, NOT
+            # work_slots_naming_board — that is a whole-log walk documented as
+            # rebuild-only, never for a per-read fold.
+            folded = read_slot_projection(
+                sk, "work", also_slots=work_ledger._bound_workers(sk)
+            ).value
+            conductor = folded.get("conductor") if isinstance(folded, dict) else None
+            # A coordinator is a slot whose fold header carries recorded entries;
+            # an empty header (no work recorded) is not a coordinator, matching the
+            # old ``read_conductor is not None`` test without touching the cache.
+            if not isinstance(conductor, dict) or not conductor.get("entries"):
                 continue
             row["is_coordinator"] = True  # derived display flag, not stored
-            for it in work_ledger.list_work_items(sk):
-                wk = it.worker_session_key  # stored as the worker's effective key
+            for it in folded.get("items") or ():
+                if not isinstance(it, dict):
+                    continue
+                wk = it.get("worker_session_key")  # the worker's effective key
                 work.append(
                     {
                         "coordinator": sk,
-                        "item_id": it.item_id,
-                        "title": it.title,
-                        "state": it.state,
-                        "status": it.status,
-                        "summary": it.summary,
-                        "pr": it.pr,
-                        "round": it.round,
+                        "item_id": it.get("item_id"),
+                        "title": it.get("title"),
+                        "state": it.get("state"),
+                        "status": it.get("status"),
+                        "summary": it.get("summary"),
+                        "pr": it.get("pr"),
+                        "round": it.get("round"),
                         # worker id only when it is a session of THIS project —
                         # never leak a worker tagged into another project (same
                         # rule as the collision flags above). Both sides are

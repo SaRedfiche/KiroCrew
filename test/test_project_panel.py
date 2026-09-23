@@ -222,19 +222,37 @@ class TestProjectPanelWorkRollup:
         channel slot's 'slack:<ts>') because that is the on-wire
         KIROCREW_SESSION_KEY the conductor tools write the ledger under — NOT
         slot.key. A panel that (wrongly) looked the ledger up by slot.key would
-        pass the wrong key here and get None, so this discrimination is what
-        pins the effective-key contract (adversarial-review B1/H1)."""
+        pass the wrong key here and get an empty fold, so this discrimination is
+        what pins the effective-key contract (adversarial-review B1/H1).
+
+        The panel reads the crew-log ``work`` FOLD (read_slot_projection), not the
+        work-ledger cache, so this stubs the fold: a conductor's fold value is
+        ``{"conductor": {"slot_key": sk, "entries": N}, "items": [item dicts]}``.
+        A conductor with no items still carries a non-empty ``entries`` header
+        (mid-planning), which is what ``is_coordinator`` keys off. Item dicts use
+        the same field names as ``WorkItem.to_dict()`` (verified: the cache is a
+        materialization of this same fold), so the fixtures build them from it.
+        ``_bound_workers`` is stubbed empty — the fixtures name every worker on
+        the items directly."""
         from kiro_crew.dashboard import project_panel
-        from kiro_crew.work_ledger import ConductorRecord
+        from kiro_crew.crew_log import projection as _projection
 
-        def _read_conductor(sk, **_):
-            return ConductorRecord(slot_key=sk) if sk in conductors else None
+        class _Proj:
+            def __init__(self, value):
+                self.value = value
 
-        def _list_work_items(sk):
-            return list(items_by_key.get(sk, []))
+        def _read_slot_projection(slot, name, *, also_slots=()):
+            if name != "work" or slot not in conductors:
+                return _Proj({"conductor": None, "items": []})
+            items = [it.to_dict() for it in items_by_key.get(slot, [])]
+            # entries is a coordinator marker: >0 whenever the slot is a
+            # conductor, whether or not it has items yet.
+            return _Proj(
+                {"conductor": {"slot_key": slot, "entries": len(items) + 1}, "items": items}
+            )
 
-        monkeypatch.setattr(project_panel.work_ledger, "read_conductor", _read_conductor)
-        monkeypatch.setattr(project_panel.work_ledger, "list_work_items", _list_work_items)
+        monkeypatch.setattr(_projection, "read_slot_projection", _read_slot_projection)
+        monkeypatch.setattr(project_panel.work_ledger, "_bound_workers", lambda _sk: ())
 
     @pytest.mark.asyncio
     async def test_conductor_member_surfaces_items_and_flag(self, tmp_path, monkeypatch):
