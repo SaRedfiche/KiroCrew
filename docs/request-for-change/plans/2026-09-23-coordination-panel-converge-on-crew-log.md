@@ -45,29 +45,56 @@ Rebased tip at authoring time: `f73f10caf`. Backup: `backup/pre-rebase-sep23`.
 
 ---
 
-## Step 1 — Fold work items from the crew-log `work` projection (HIGHEST VALUE)
+## Step 1 — Read the WORK section from the crew-log `work` fold, not the cache (HIGHEST VALUE)
 
-Close the biggest divergence: the panel's WORK section reads our own store; main
-folds the same concept from the crew log. Re-point the panel at the crew-log
-`work` projection for the coordinator's slot(s), retiring the parallel store.
+Discovery (subagent 04fb9e78, 2026-09-23, all citations verified) corrected the
+premise: there is **no separate parallel store**. The panel reads the work-ledger
+JSON **cache** via `work_ledger.read_conductor(sk)` + `list_work_items(sk)`
+(`project_panel.py:176,180`), and that cache is itself a materialization of the
+same `work` fold — `rebuild_from_projection` (`work_ledger.py:2649`) rewrites the
+`it_*.json` files *from* `read_slot_projection(slot, "work", …)`. So the change is
+narrow: **the panel stops reading the cache files and reads the fold value
+directly** — same record, but the fold is the one authoritative shape, so the
+panel and the rebuild agree by construction.
 
-- [ ] Read `work_ledger.rebuild_from_projection` + `work_slots_naming_board` and
-      the `work` fold in `crew_log/projection.py`; document the exact shape the
-      fold emits (item id, title, assignee, status, epoch).
-- [ ] Map our panel's work-item fields onto the fold's fields; identify any field
-      the fold does not carry (assignee-to-a-named-worker is the likely gap).
-- [ ] If a gap exists, decide extend-the-fold (upstreamable) vs derive-in-panel;
-      prefer extending the fold so one reader owns the shape.
-- [ ] Change `api_project_panel`'s work section to read
-      `read_slot_projection(coordinator_slot, "work", also_slots=member_slots)`
-      instead of the parallel store.
-- [ ] Delete the parallel work-item store + its writes once nothing reads it;
-      grep to prove zero readers before deletion.
-- [ ] Tests: the panel's work section reflects a crew-log-recorded work item;
-      resume-by-seq equivalence holds (fold from checkpoint == fold from scratch).
-- [ ] Update the feature-map Coordination row's handler/endpoint cells if the
-      backing source moved.
-- [ ] Ship-it gate; commit.
+Consequences of the finding:
+- **No fold extension needed.** Every panel field maps to an existing fold field
+  (`item_id/title/state/status/summary/pr/round` direct; `worker` = the fold's
+  `worker_session_key`, then the panel's own leak-gate `wk in project_session_keys`;
+  `is_coordinator` = "the `conductor` header has entries"; `coordinator` = the
+  header's `slot_key`). The only genuine absence — a human-readable assignee NAME —
+  is pre-existing (neither cache nor fold stores it; the panel emits the raw key
+  today) and is derived panel-side by joining the session key to the live-slot
+  snapshot's `title`/`agent`. Do NOT push slot identity into the fold.
+- **Nothing gets deleted.** The cache stays — it is the conductor tools' write /
+  resume path (`dashboard/handlers/work_ledger.py`). The panel is simply retiring
+  its own two cache reads as a second reader-shape.
+- **Do NOT call `work_slots_naming_board` in the panel path** — it is a whole-log
+  walk explicitly "for a rebuild, not the per-read fold" (`projection.py:2625`).
+  Pass the bound-worker slots the conductor's `bind` entries already name.
+
+Checklist:
+- [x] In `api_project_panel`: `read_conductor(sk)` → the fold header from
+      `read_slot_projection(sk, "work", also_slots=<bound workers>).value["conductor"]`;
+      `is_coordinator` keys off a non-empty header (`entries`), not `read_conductor
+      is not None` (`project_panel.py:176-178`).
+- [x] `for it in list_work_items(sk)` → iterate `folded.get("items") or ()`; item
+      access becomes dict keys (`it["title"]` …) not attributes; the `worker`
+      leak-gate reads `it["worker_session_key"]` (`project_panel.py:180-196`).
+- [x] Import swap: function-scope `from kiro_crew.crew_log.projection import
+      read_slot_projection` (keeps crew-log storage off the boot path; boot-path
+      flag-off invariant re-verified green).
+- [x] Assignee display name stays a panel-side join (unchanged from today's raw-key behaviour).
+- [x] Leave every OTHER cache reader untouched — only the panel's two calls retired.
+- [x] Tests: project_panel work-rollup suite updated to stub the fold; 15 green
+      (added the `entries==0` bootstrap-window regression test in `0c56e886f`,
+      addressing the crew's round-1 MEDIUM).
+- [x] Feature-map Coordination row: no change needed — the read moved internally
+      (cache→fold inside `project_panel.py`); the row's cited handlers/endpoints
+      (`project_panel.py`, `chat_folders.py`, the panel endpoints) are unchanged.
+- [x] Ship-it gate; commit. **Paired GO @ `0c56e886f`** (crew GO after MEDIUM fixed +
+      panel GO: GPT/Opus PASS). Recorded in `docs/scan-log.md`. **STEP 1 DONE.**
+
 
 ## Step 2 — Serve the panel from a commit-driven projection (not a per-poll rescan)
 

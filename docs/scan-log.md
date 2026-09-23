@@ -666,3 +666,39 @@ Head SHA `963dec35e` (branch `feature/project-group-shared-memory`). Commits:
 **Paired verdict @ `963dec35e`: crew GO | panel GO.** Both gates GO. Open follow-up
 (non-blocking): replace the create-name `window.prompt` with an inline input (UX lane
 on both crew and panel flagged it).
+
+## Convergence Step 1 — WORK section reads the crew-log `work` fold (not the ledger cache) — GO (2026-09-23)
+
+Diff scope: `b41b41313~1..0c56e886f` (2 commits) — `src/kiro_crew/dashboard/project_panel.py`
++ `test/test_project_panel.py`. Backend-only; Holmes skipped (no regex/secrets/IaC, same
+rationale as prior backend gates). Plan:
+`docs/request-for-change/plans/2026-09-23-coordination-panel-converge-on-crew-log.md`.
+
+- **ASH (`b41b41313`): GO** — 7/7 scanners, 0 findings every severity (is_complete lags
+  SBOM aggregation as usual; scanner work done + clean).
+- **Adversarial crew (`b41b41313`): GO after one MEDIUM fixed.**
+  - Correctness: GO with one MEDIUM — the coordinator test changed from `read_conductor
+    is not None` (cache header exists) to `entries` truthy (fold has recorded entries).
+    A ledger `ensure_conductor` bootstrapped but with no committed `work/recorded` entry
+    yet has `entries==0` and is now NOT a coordinator. Deliberate + consistent with
+    `rebuild_from_projection`'s identical predicate, but unpinned (the `_patch_ledger` stub
+    forces `entries>=1`). FIXED in `0c56e886f`: added
+    `test_bootstrapped_ledger_with_zero_entries_is_not_a_coordinator` (direct `_Proj` stub,
+    `entries: 0` → not a coordinator).
+  - Tests: GO — reviewer proved the rewritten fold stub is load-bearing (not tautological)
+    and faithful (`WorkItem.to_dict()` ⊇ the 8 panel-read fields), no assertion weakened.
+  - Docs-honesty: GO — every claim in commit/comments/plan verified at source, including
+    that the boot-path flag-off invariant is enforced by a real test walking the actual
+    boot graph (a module-scope crew_log import in project_panel would fail it).
+- **Multimodel panel (`0c56e886f`): GO** — GPT PASS + Opus PASS (both high-bar lanes),
+  First-Principles PASS, Design CONCERNS (ux skipped, no UI surface). Design's primary
+  CONCERN was the same `entries==0`-masked-by-stub finding the crew raised, already fixed
+  by the standalone regression test it acknowledges; its residual (cover the boundary via
+  the shared fixture path too; `_bound_workers` is a private cross-module call) is Watch-level
+  taste/robustness, non-blocking. Report: `docs/scan-coord-step1.md` in the multimodel-review
+  repo.
+
+**Paired verdict @ `0c56e886f`: crew GO | panel GO.** Both gates GO. Open follow-up
+(non-blocking, Design Watch): `_bound_workers` is called cross-module as a private symbol —
+a thin named export or keyword default would make the coupling explicit. It mirrors what
+`rebuild_from_projection` already does, so deferred, not churned now.
