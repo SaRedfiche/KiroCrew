@@ -967,6 +967,112 @@ def _is_self_kill(text_lower: str) -> bool:
     return False
 
 
+#: Word-break characters for the RAW span splitter: unquoted whitespace is
+#: handled separately, these are the operator/separator characters bash ends a
+#: word on. Mirrors ``_shell_normalizer._SHELL_WORD_BREAK`` minus the space set.
+_SHELL_WORD_BREAK_RAW = frozenset(";&|()<>`")
+
+
+def _raw_word_spans(source: str) -> "list[tuple[int, int]]":
+    """``(start, end)`` of each shell WORD in *source*, at its real offset.
+
+    Splits on UNQUOTED whitespace and the operator/separator characters bash
+    breaks a word on, walking the shared quote/escape state machine so a quoted
+    or escaped separator stays inside its word (``pkill -f '[;]*kirocrew'`` is
+    three words, not four). An unquoted run of operator characters (``;``,
+    ``&&``, ``|``) coalesces into one span, mirroring how the token walk keeps a
+    separator as one token -- so the span list aligns index-for-index with the
+    top-level frame for the common command shapes.
+
+    It does NOT resolve quoting, ``$VAR`` or ``~``: these are RAW source offsets,
+    so the region a reader sees is the bytes they actually hold, even when the
+    token walk later resolved that word to something else (``"$C"/gateway/*``).
+    """
+    spans: list[tuple[int, int]] = []
+    start = -1
+    prev_was_operator = False
+    for step in _shell_normalizer._iter_shell_chars(source):
+        off = step.offset
+        breaks = step.active and (step.char.isspace() or step.char in _SHELL_WORD_BREAK_RAW)
+        if not breaks:
+            if start < 0:
+                start = off
+            continue
+        if start >= 0:
+            spans.append((start, off))
+            start = -1
+            prev_was_operator = False
+        # An unquoted operator character is a separator word of its own; a run of
+        # them (``&&``, ``||``, ``;;``) coalesces into one span, but an operator
+        # that merely abuts a preceding WORD (``export;``) stays its own span.
+        if not step.char.isspace():
+            if prev_was_operator and spans and spans[-1][1] == off:
+                spans[-1] = (spans[-1][0], off + len(step.text))
+            else:
+                spans.append((off, off + len(step.text)))
+            prev_was_operator = True
+        else:
+            prev_was_operator = False
+    if start >= 0:
+        spans.append((start, len(source)))
+    return spans
+
+
+def _self_kill_token_spans(text_lower: str) -> "tuple[tuple[int, int], tuple[int, int]] | None":
+    """The ``(program, target)`` source offsets a by-name self-kill keyed on.
+
+    Returns the offsets of the ``pkill``/``killall`` program token and of the
+    argument carrying the product name, both as ``(start, end)`` indices into
+    *text_lower* -- so the ``self-protection-kill`` refusal diagnostic can name
+    which token was read as the kill program and which as the target, without
+    echoing any byte of the command.
+
+    Scope is the FIRST (by-name) leg of :func:`_is_self_kill`, mirrored token for
+    token so the two never disagree about what fired, and only the TOP-LEVEL
+    frame (``source == text_lower``, i.e. the frame the outer offsets belong to):
+    a nested-payload frame's tokens live inside one token of the outer command,
+    so their offsets are not the outer command's, and those keep the
+    whole-command span. Raw word spans are aligned to the frame's tokens BY
+    INDEX -- faithful because both derive from the same word split, before the
+    per-word quote/``$VAR``/``~`` resolution the token walk then applies. That is
+    why a ``$C``-resolved command still yields spans: the raw word
+    ``"$C"/gateway/*`` is the token the floor keyed on, bracketed at its real
+    offset even though the product name entered it by expansion. When the word
+    counts disagree (an empty-quote collapse merged a word) the index alignment
+    is not provable, so this returns ``None`` and the caller keeps the
+    whole-command span. The bare-``kill`` leg aims through a substitution BODY
+    rather than one argv token, so it too has no pair to point at.
+    """
+    if not _self_floor_can_fire(text_lower):
+        return None
+    raw_spans = _raw_word_spans(text_lower)
+    for source, tokens in _shell_payload_walk(text_lower):
+        # Only the top-level frame's word offsets index the submitted command,
+        # and only when the raw split and the resolved frame agree on word count.
+        if source != text_lower or len(raw_spans) != len(tokens):
+            continue
+        programs = _argv_programs(tokens)
+        disqualified: "bool | None" = None
+        for i, token in enumerate(tokens):
+            if not _is_kill_by_name_program(token):
+                continue
+            if disqualified is None:
+                disqualified = _shell_normalizer._data_consumer_command_disqualified(tokens)
+            if _data_consumer_exempt(i, token, programs, tokens, command_disqualified=disqualified):
+                continue
+            depth = 0
+            for j, arg in enumerate(tokens[i + 1 :], start=i + 1):
+                if _SELF_NAME_RE.search(_debracket(arg)) or _SELF_NAME_RE.search(
+                    _shell_normalizer._normalize_operand(arg)
+                ):
+                    return raw_spans[i], raw_spans[j]
+                depth += _substitution_depth_delta(arg)
+                if depth <= 0 and _ends_argv(arg):
+                    break
+                depth = max(depth, 0)
+    return None
+
+
 # ── Self-protection subcommand floor (argv-structural) ──────────────────────
 # ``restart`` / ``update`` / ``gateway restart`` / ``cloud <destructive>`` each
 # run a privileged self-action. The regex tier matches these on raw text, which

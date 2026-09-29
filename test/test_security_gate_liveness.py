@@ -126,12 +126,24 @@ def _url_payload_command(n: int) -> str:
 #: Three incomplete dumps in a row log one warning, so a host whose table never
 #: reads can be told apart from a target that is really this machine.
 #:
+#: Raised again, from 27,942, for naming the program and target tokens in a self-kill
+#: refusal: ``argv_floor`` splits the command into shell words at their real source
+#: offsets through the shared quote/escape state machine, aligns those raw word spans
+#: to the resolved frame's tokens by index, and brackets the kill program and its
+#: target at their true offsets even when the program entered through a ``$VAR``
+#: expansion, so the assignment that only mentions the name is not mistaken for the
+#: target; only the offset-mappable top-level frame is bracketed and a raw/token count
+#: mismatch falls back to the whole span. ``diagnostics`` carries the optional program
+#: and target spans plus the ``RefusalTokenSpan`` record, keeping the ``span=`` line
+#: byte-identical when they are omitted. Most of the cost is that offset machinery and
+#: its record, not new matching logic.
+#:
 #: The number IS the package's measured total, carrying no spare room: a ratchet with
 #: headroom admits exactly the unreviewed growth it exists to catch, so the next line
 #: added here fails this gate and has to be re-pinned deliberately, with its reason
 #: written above. The guards that detect a monolith growing back are the per-file cap
 #: and the facade's share below, and both must stay untouched.
-_PACKAGE_LINE_BUDGET = 27_942
+_PACKAGE_LINE_BUDGET = 28_146
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

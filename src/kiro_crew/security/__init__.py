@@ -1203,6 +1203,8 @@ def is_denied(
         *,
         rule: str = "",
         component: str = "",
+        program_span: "tuple[int, int] | None" = None,
+        target_span: "tuple[int, int] | None" = None,
     ) -> str:
         """Refusal text for *matched* -- see :func:`_deny_reason`, the shared producer.
 
@@ -1217,9 +1219,23 @@ def is_denied(
         reports a pattern the input provably cannot match and is the refusal an
         agent cannot diagnose at all. The span is the whole subject because a floor
         decides on the argv's SHAPE rather than at an offset.
+
+        *program_span*/*target_span* are the additive token offsets a TOKEN-level
+        floor keyed on: the self-protection-kill floor decides on two
+        specific tokens (the kill program and the target), so it names them while
+        still reporting the whole command as ``span=``. A shape floor supplies
+        neither and its line is byte-identical to before.
         """
         diagnostic = (
-            _diag.refusal_diagnostic(rule, component, tool_name) if rule and component else None
+            _diag.refusal_diagnostic(
+                rule,
+                component,
+                tool_name,
+                program_span=program_span,
+                target_span=target_span,
+            )
+            if rule and component
+            else None
         )
         return _rules._deny_reason(
             matched, reason_notes, note_override=note_override, diagnostic=diagnostic
@@ -1416,11 +1432,24 @@ def is_denied(
             # hit routinely occurs on input that pattern cannot match and the
             # bare identifier reads as a false explanation.
             _emit_deny_event(tool_name, pattern, lower)
+            # self-protection-kill decides on two specific tokens, so it names
+            # them. The offsets come from ``lower``; lower-casing never
+            # changes length, so they index ``tool_name`` identically. ``None``
+            # (the bare-kill leg, or a token with no literal source span) keeps
+            # the whole-command span. Every other floor passes neither.
+            program_span: "tuple[int, int] | None" = None
+            target_span: "tuple[int, int] | None" = None
+            if rule_id == "self-protection-kill":
+                spans = _argv._self_kill_token_spans(lower)
+                if spans is not None:
+                    program_span, target_span = spans
             return _reason(
                 pattern,
                 _rules._SELF_PROTECTION_FLOOR_NOTES.get(rule_id, ""),
                 rule=rule_id,
                 component="argv-floor",
+                program_span=program_span,
+                target_span=target_span,
             )
     # The self-management SUBCOMMAND floors have no catalog row (their
     # product-name-anywhere regex rows were deleted, see
@@ -2731,6 +2760,7 @@ _EXPORTS: dict[str, str] = {
     "REFUSAL_DIAGNOSTIC_PREFIX": "diagnostics",
     "RefusalDiagnostic": "diagnostics",
     "RefusalSpanShape": "diagnostics",
+    "RefusalTokenSpan": "diagnostics",
     "annotate_refusal": "diagnostics",
     "refusal_diagnostic": "diagnostics",
     "refusal_span_shape": "diagnostics",
@@ -3317,6 +3347,7 @@ if TYPE_CHECKING:  # keep the names visible to type checkers and IDEs
         REFUSAL_DIAGNOSTIC_PREFIX,
         RefusalDiagnostic,
         RefusalSpanShape,
+        RefusalTokenSpan,
         annotate_refusal,
         refusal_diagnostic,
         refusal_span_shape,
