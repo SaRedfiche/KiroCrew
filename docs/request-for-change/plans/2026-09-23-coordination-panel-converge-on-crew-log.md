@@ -1,6 +1,16 @@
 # Coordination Panel — Converge on the Crew-Log Substrate
 
-> **Active plan.** Written 2026-09-23 after rebasing
+> **SUPERSEDED 2026-09-30** by
+> [`2026-09-30-rebaseline-thin-project-salvage-collision-signals.md`](2026-09-30-rebaseline-thin-project-salvage-collision-signals.md).
+> This plan's premise — §12.6 project-group *shared memory*, converged onto the
+> crew-log substrate — was already retired when it was written: `rfc-crew-projects.md`
+> shipped **Revision 2 ("the thin Project")** on 2026-09-18, five days earlier,
+> walking away from the group-shared-memory model. The collision signals survive
+> and are salvaged under the new plan; the panel-convergence Steps 1–3 are
+> dropped (the panel is downstream of the memory model the RFC retired). Kept
+> here for history.
+
+> **Active plan (historical).** Written 2026-09-23 after rebasing
 > `feature/project-group-shared-memory` onto an origin/main that shipped the
 > crew-log projection kernel, the work-ledger board fold, and the session-tree
 > (conductor lane) projection. The coordination panel (§12.6) currently
