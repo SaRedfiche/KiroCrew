@@ -41,24 +41,25 @@ globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} 
 import SidePanel, { newMenuSections, NEW_MENU_LABEL_KEY } from '../pages/chat/SidePanel'
 import { usePanelTabs } from '../hooks/usePanelTabs'
 
-function Harness() {
+function Harness({ projectGroupId }: { projectGroupId?: string }) {
   const tabsCtl = usePanelTabs('slot-a')
   return (
     <SidePanel
       tabsCtl={tabsCtl}
       slot="slot-a"
+      projectGroupId={projectGroupId}
       onFileSave={async () => {}}
       onClose={() => {}}
     />
   )
 }
 
-function renderPanel() {
+function renderPanel(projectGroupId?: string) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
       <Provider store={createTestStore()}>
-        <Harness />
+        <Harness projectGroupId={projectGroupId} />
       </Provider>
     </QueryClientProvider>,
   )
@@ -88,6 +89,17 @@ describe('side panel + menu (shadcn dropdown)', () => {
     // Diagnostics are behind Developer Mode, which this harness has off.
     expect(screen.queryByRole('menuitem', { name: 'Logs' })).toBeNull()
     expect(screen.queryByRole('menuitem', { name: 'Context breakdown' })).toBeNull()
+    // Coordination is ALWAYS offered, even when the session is not tagged into
+    // a project group (this harness passes no projectGroupId): opening it shows
+    // the on-ramp CTA that tags the session in one click. Withholding it hid the
+    // feature from anyone who had not already found the tagging path.
+    expect(screen.getByRole('menuitem', { name: 'Coordination' })).toBeTruthy()
+  })
+
+  it('offers Coordination when the session is tagged into a project group', () => {
+    renderPanel('grp-1')
+    openMenu()
+    expect(screen.getByRole('menuitem', { name: 'Coordination' })).toBeTruthy()
   })
 
   it('opens the picked view as a tab', () => {
@@ -146,7 +158,7 @@ describe('newMenuSections', () => {
     // Only that row goes — its group still carries the rest, so the group is not
     // dropped and nothing else is collateral.
     expect(kinds({ devMode: true, terminalEnabled: true, summaryEnabled: false })[0])
-      .toEqual(['command-center', 'pins', 'issues', 'links', 'subagents', 'workflows', 'git'])
+      .toEqual(['command-center', 'pins', 'issues', 'links', 'subagents', 'workflows', 'git', 'coordination'])
   })
 
   it('keeps each group id fixed however the gates fall', () => {
@@ -181,7 +193,7 @@ describe('newMenuSections', () => {
 
   it('groups by session output, workspaces, then diagnostics', () => {
     expect(kinds({ devMode: true, terminalEnabled: true })).toEqual([
-      ['command-center', 'summary', 'pins', 'issues', 'links', 'subagents', 'workflows', 'git'],
+      ['command-center', 'summary', 'pins', 'issues', 'links', 'subagents', 'workflows', 'git', 'coordination'],
       ['side', 'browser', 'terminal'],
       ['logs', 'context', 'crewlog'],
     ])
@@ -201,12 +213,12 @@ describe('newMenuSections', () => {
     // Both gates closed: diagnostics gone outright, Terminal dropped from
     // Workspaces — two groups, not three with a hole.
     expect(kinds({ devMode: false, terminalEnabled: false })).toEqual([
-      ['command-center', 'summary', 'pins', 'issues', 'links', 'subagents', 'workflows', 'git'],
+      ['command-center', 'summary', 'pins', 'issues', 'links', 'subagents', 'workflows', 'git', 'coordination'],
       ['side', 'browser'],
     ])
     // Terminal back, diagnostics still gated.
     expect(kinds({ devMode: false, terminalEnabled: true })).toEqual([
-      ['command-center', 'summary', 'pins', 'issues', 'links', 'subagents', 'workflows', 'git'],
+      ['command-center', 'summary', 'pins', 'issues', 'links', 'subagents', 'workflows', 'git', 'coordination'],
       ['side', 'browser', 'terminal'],
     ])
   })

@@ -5,7 +5,7 @@
  * drop-to-column, and the board columns.
  */
 
-import type { AgentTagPolicy, SessionLaneKey } from '../../types'
+import type { AgentTagPolicy, ProjectPanel, SessionLaneKey } from '../../types'
 import type { ClientTransport } from './transport'
 
 /** One moved conversation, as `POST /api/channel-folders/backfill` reports it. */
@@ -74,6 +74,39 @@ export function createChatOrganizationEndpoints({ post, del, patch, j, sessionKe
     backfillChannelFolder: (namespace: string) =>
       post('/api/channel-folders/backfill', { namespace }).then(j) as Promise<ChannelFolderBackfillReport>,
     setSlotFolder: (slot: string, folderId: string | null) => patch('/api/chat/slots/' + encodeURIComponent(slot) + '/folder', { folder_id: folderId || '' }).then(j),
+    /** List the project-coordination records ({id, name}) — the create-or-pick
+     *  source for the session Project submenu. Served under `/api/coordination`,
+     *  a namespace distinct from the task-runner's unrelated `/api/projects`
+     *  concept; this is the ProjectStore table. */
+    listCoordinationProjects: () => fetch('/api/coordination/projects', { headers: { ..._sk } }).then(j),
+    /** Read one project-coordination group's live panel snapshot: the record,
+     *  every LIVE session tagged into it (with branch + coordinator flag), the
+     *  coordinator work-ledger rollup, and the collision flags (same-file /
+     *  same-worktree). `id` is the project_group_id. `_sk` so an app/restricted
+     *  caller is gated identically to the list route. 404 = unknown id or an app
+     *  that does not own the group. */
+    getProjectPanel: (id: string) =>
+      fetch('/api/coordination/' + encodeURIComponent(id) + '/panel', { headers: { ..._sk } }).then(j) as Promise<ProjectPanel>,
+    /** Tag a session into a project (create-or-attach-or-untag), mirroring the
+     *  backend's one endpoint. Pass `{name}` to CREATE a project and attach;
+     *  `{projectGroupId}` to attach to an existing one; neither to UNTAG. The
+     *  backend 400s a non-empty id sent together with a name (`ambiguous_target`);
+     *  this client only ever sends exactly one of the three shapes. `slot` is
+     *  passed as the session key so a restricted (incognito) slot is recognised
+     *  as such by the write gate. */
+    setSlotProjectGroup: (
+      slot: string,
+      target: { name: string } | { projectGroupId: string } | null,
+    ) =>
+      post(
+        '/api/chat/slots/' + encodeURIComponent(slot) + '/project-group',
+        target == null
+          ? {}
+          : 'name' in target
+            ? { name: target.name }
+            : { project_group_id: target.projectGroupId },
+        slot,
+      ).then(j),
     setSlotColor: (slot: string, colorIndex: number | null) => patch('/api/chat/slots/' + encodeURIComponent(slot) + '/color', { color_index: colorIndex }).then(j),
     /** Set a custom per-session color (#rrggbb). The backend clears color_index
      *  when a hex is set and vice versa (mutual exclusion), so callers send one

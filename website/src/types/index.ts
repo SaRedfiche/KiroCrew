@@ -1127,7 +1127,7 @@ export interface ChatSlot {
   linked_session_key?: string
   /** Prompts held for a later turn on this slot. */
   queue_depth?: number
-  key: string; title?: string; messages: number; running: boolean; stopping?: boolean; pending_approval?: boolean; created?: string; last_ts?: string; last_turn_ts?: string; last_message?: string; agent?: string; model?: string; reasoning_effort?: string; mode?: string; surface?: string; workspace?: string; trust?: boolean; trust_scope?: string; trust_reads?: boolean; folder_id?: string; pinned?: boolean; tags?: string[]; tags_revision?: string; links?: SessionLink[]; slack_linked?: boolean; slack_channel?: string; slack_thread_ts?: string; color_index?: number | null; color_hex?: string | null; memory_mode?: 'persistent' | 'incognito' | 'temporary'; project?: string; forked_from?: string | null; source_links?: { provider: SourceProviderId; number: number; url: string; label?: string; repo?: string; ci?: 'running' | 'passed' | 'failed' | null; state?: 'open' | 'draft' | 'merged' | 'closed'; mergeable?: string; mergeStateStatus?: string; kind?: 'change' | 'issue'; identity?: string }[]; source_links_total?: number
+  key: string; title?: string; messages: number; running: boolean; stopping?: boolean; pending_approval?: boolean; created?: string; last_ts?: string; last_turn_ts?: string; last_message?: string; agent?: string; model?: string; reasoning_effort?: string; mode?: string; surface?: string; workspace?: string; trust?: boolean; trust_scope?: string; trust_reads?: boolean; folder_id?: string; project_group_id?: string; pinned?: boolean; tags?: string[]; tags_revision?: string; links?: SessionLink[]; slack_linked?: boolean; slack_channel?: string; slack_thread_ts?: string; color_index?: number | null; color_hex?: string | null; memory_mode?: 'persistent' | 'incognito' | 'temporary'; project?: string; forked_from?: string | null; source_links?: { provider: SourceProviderId; number: number; url: string; label?: string; repo?: string; ci?: 'running' | 'passed' | 'failed' | null; state?: 'open' | 'draft' | 'merged' | 'closed'; mergeable?: string; mergeStateStatus?: string; kind?: 'change' | 'issue'; identity?: string }[]; source_links_total?: number
   /** Provenance bucket from the backend `SlotOrigin` ("user" | "app" | "cron"
    * | "system"; absent/"" for untagged background slots). The session-pulse
    * survey shows only on a "user" slot, so an imported Slack thread, a
@@ -1552,6 +1552,48 @@ export interface PendingApproval {
 
 export interface SubagentInfo {
   id: string; task: string; done: boolean; error?: string; result?: string
+}
+
+/** One live session tagged into a project group, as the panel route returns it.
+ *  `session` is the effective session key; `is_coordinator` is present+true only
+ *  when the session owns a work ledger. */
+export interface ProjectPanelSession {
+  session: string
+  title: string
+  agent: string
+  branch: string
+  is_coordinator?: boolean
+}
+
+/** A collision flag between sessions in the group. `repo_rel_path` is present
+ *  only for a `same-file` signal; `sessions` are effective keys of this group's
+ *  own sessions party to the collision. */
+export interface ProjectPanelCollision {
+  signal: 'same-file' | 'same-worktree'
+  repo_rel_path?: string
+  sessions: string[]
+}
+
+/** One coordinator work-ledger item rolled up for the group. `worker` is the
+ *  worker's effective key when it is a session OF THIS group, else null. */
+export interface ProjectPanelWorkItem {
+  coordinator: string
+  item_id: string
+  title: string
+  state: string
+  status: string
+  summary: string
+  pr: number | null
+  round: number
+  worker: string | null
+}
+
+/** GET /api/projects/{id}/panel — the coordination side-panel snapshot. */
+export interface ProjectPanel {
+  project: { id: string; name: string }
+  sessions: ProjectPanelSession[]
+  collisions: ProjectPanelCollision[]
+  work: ProjectPanelWorkItem[]
 }
 
 export interface SessionInfo {

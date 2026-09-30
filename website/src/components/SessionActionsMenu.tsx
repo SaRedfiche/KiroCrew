@@ -1,10 +1,11 @@
 import * as React from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Pencil, Circle, Pin, Zap, Locate, Link2, Tag as TagIcon, X, ExternalLink, Monitor, Undo2, RotateCw, PanelTop, Sparkles } from 'lucide-react'
 import type { ChatFolder } from '../types'
 import FolderMoveSubmenu from './FolderMoveSubmenu'
 import ErrorNotice, { ErrorNoticeMenuItem } from './ErrorNotice'
 import { useFolderSortMode } from '../hooks/useFolderSortMode'
+import ProjectTagSubmenu, { type CoordinationProject } from './ProjectTagSubmenu'
 import SendToInstanceSubmenu from './SendToInstanceSubmenu'
 import ExportSessionItem from './ExportSessionItem'
 import ImportSessionItem from './ImportSessionItem'
@@ -168,6 +169,40 @@ export default function SessionActionsMenu({
   // dedupes against the sidebar's own ['chat-folders'] cache — no extra fetch.
   const { data: folders = [] } = useQuery<ChatFolder[]>({ queryKey: ['chat-folders'], queryFn: () => api.chatFolders() })
 
+  // Project-coordination records drive the Project submenu. Like the folders
+  // query above, it is NOT `enabled`-gated and carries NO staleTime — what
+  // limits the fetch is that this component only MOUNTS inside an open Radix
+  // menu (no forceMount). A staleTime here is a bug: after a create/attach the
+  // menu closes, so the invalidateQueries refetch has no mounted observer, and
+  // on the next open a non-zero staleTime would serve the stale (pre-create)
+  // list — the "only ever shows New project" regression. Default staleTime 0
+  // makes every reopen refetch, matching the folders query.
+  const currentProjectGroupId = slot?.project_group_id
+  const { data: projectsResp } = useQuery<{ projects: CoordinationProject[] }>({
+    queryKey: ['coordination-projects'],
+    queryFn: () => api.listCoordinationProjects(),
+  })
+  const coordinationProjects = projectsResp?.projects ?? []
+  const queryClient = useQueryClient()
+  // After any tag write the session's project_group_id changes AND a create
+  // adds a record, so refresh both. We must invalidate the slot list ourselves
+  // rather than trusting the slot stream to push the new project_group_id: if
+  // we don't, currentSlot.project_group_id stays stale, so the Coordination
+  // tab's withhold guard never flips and an untag never visibly clears.
+  const afterTagWrite = () => {
+    void queryClient.invalidateQueries({ queryKey: ['coordination-projects'] })
+    void queryClient.invalidateQueries({ queryKey: ['chat-slots'] })
+  }
+  const tagPickProject = (projectGroupId: string) => {
+    void api.setSlotProjectGroup(slotKey, { projectGroupId }).then(afterTagWrite)
+  }
+  const tagCreateProject = (name: string) => {
+    void api.setSlotProjectGroup(slotKey, { name }).then(afterTagWrite)
+  }
+  const untagProject = () => {
+    void api.setSlotProjectGroup(slotKey, null).then(afterTagWrite)
+  }
+
   const groups = collapseGroups<React.ReactNode>([
     // Informational (header only) — generic slots injected by the caller.
     infoSlots ?? [],
@@ -248,6 +283,15 @@ export default function SessionActionsMenu({
           <Separator />
         </React.Fragment>
       ),
+      <ProjectTagSubmenu
+        key="project"
+        variant={variant}
+        projects={coordinationProjects}
+        currentProjectGroupId={currentProjectGroupId}
+        onPick={tagPickProject}
+        onCreate={tagCreateProject}
+        onUntag={untagProject}
+      />,
       <Item key="tags" onSelect={() => openTagPopover(slotKey)}>
         <TagIcon size={13} className="shrink-0 text-muted" /> {i18nT('components.sessionActionsMenu.tags')}
       </Item>,
