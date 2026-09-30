@@ -169,6 +169,12 @@ _CAP_REGISTER: dict[str, tuple[str, str]] = {
     # A thread reply is one text field (capped at 32 KiB by the handler) plus a
     # slot key, so the shared default ceiling is the right one.
     "chat_threads.py::api_chat_thread_reply": ("<default>", _BOUNDED_BY_DEFAULT),
+    # Project-coordination tagging: the body is {project_group_id?} or {name?},
+    # a fixed set of short control fields, so the shared default cap is right.
+    "chat_folders.py::api_chat_slot_project_group": (
+        "<default>",
+        _BOUNDED_CONTROL_FIELDS,
+    ),
     # Voice config is a flat set of short scalars (provider name, voice name,
     # rate, paths) and voice synthesis takes one reply's text, which the panel
     # already truncates well below the shared default. Neither has a legitimate

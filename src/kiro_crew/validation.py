@@ -2472,6 +2472,33 @@ ARTIFACT_MOVE_SCHEMA = ToolSchema(
     ],
 )
 
+# ── Group shared memory (design §12.6) ──
+#
+# The two project-group shared-memory tools on ``kirocrew-dashboard``. Neither
+# takes a ``project_group_id``: which group a call touches is resolved from the
+# CALLING SESSION's own slot server-side, never from an argument — the same
+# unforgeable-identity discipline the work-ledger tools rest on. So ``read`` has
+# no fields at all, and ``write`` carries only the text and how to apply it.
+_GROUP_MEMORY_MODES = frozenset({"replace", "append"})
+# Bounds a SINGLE write's text — generous (durable project context a coordinator
+# curates, not a per-turn message) but finite, and refused (not truncated) so a
+# coordinator who is told the cap trims their own text rather than losing the
+# tail silently. This does NOT bound the ACCUMULATED blob: append concatenates,
+# so the total-file ceiling is enforced separately in the store
+# (``group_memory.GROUP_MEMORY_BLOB_MAX``), which refuses an append whose result
+# would exceed it.
+_GROUP_MEMORY_TEXT_MAX = 16_000
+
+GROUP_MEMORY_READ_SCHEMA = ToolSchema(tool_name="group_memory_read", fields=[])
+
+GROUP_MEMORY_WRITE_SCHEMA = ToolSchema(
+    tool_name="group_memory_write",
+    fields=[
+        FieldSpec("text", str, required=True, max_len=_GROUP_MEMORY_TEXT_MAX),
+        FieldSpec("mode", str, allowed=_GROUP_MEMORY_MODES),
+    ],
+)
+
 DEPLOY_ARTIFACT_SCHEMA = ToolSchema(
     tool_name="deploy_artifact",
     fields=[
@@ -3440,6 +3467,14 @@ SESSION_CREATE_SCHEMA = ToolSchema(
             max_len=MAX_SHORT_STRING,
             pattern=_MODEL_NAME_RE,
         ),
+        # An existing project-coordination group id to tag the new session into
+        # at birth, so a coordinator's dispatched worker is a group member the
+        # project panel's rollup surfaces immediately. Attach-only: the create
+        # route refuses an unknown id (project_group_not_found). Bounded like the
+        # other opaque-id fields.
+        FieldSpec(
+            "project_group_id", str, required=False, default="", max_len=MAX_SHORT_STRING
+        ),
     ],
 )
 
@@ -3839,6 +3874,8 @@ MCP_DASHBOARD_SCHEMAS: dict[str, ToolSchema] = {
     "chat_tag_update": CHAT_TAG_UPDATE_SCHEMA,
     "chat_tag_assign": CHAT_TAG_ASSIGN_SCHEMA,
     "chat_session_pin": CHAT_SESSION_PIN_SCHEMA,
+    "group_memory_read": GROUP_MEMORY_READ_SCHEMA,
+    "group_memory_write": GROUP_MEMORY_WRITE_SCHEMA,
 }
 
 # ── Tool Schemas (MCP crew log — server ``kirocrew-crew-log``) ──

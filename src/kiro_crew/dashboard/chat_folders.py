@@ -21,6 +21,7 @@ from kiro_crew.dashboard.chat_tags import tags_write_lock, validate_folder_tag_i
 from kiro_crew.dashboard.chat_utils import effective_session_key, slot_history_key
 from kiro_crew.dashboard.create_rate_limit import FOLDER_CREATE, allow_create
 from kiro_crew.dashboard.handlers._shared import read_bounded_json
+from kiro_crew.dashboard.project_store import ProjectStoreBusy
 from kiro_crew.dashboard.state import DashboardState
 from kiro_crew.dashboard.token_auth import (
     KNOWN_INTERNAL_CALLERS,
@@ -2825,3 +2826,241 @@ async def api_chat_slot_mode(request: web.Request) -> web.Response:
         resources=name,
     )
     return web.json_response({"ok": True, "mode": slot.mode})
+
+
+async def api_chat_slot_project_group(request: web.Request) -> web.Response:
+    """POST /api/chat/slots/{slot}/project-group — tag a session with a project.
+
+    Shape A (create-or-attach-or-untag), one endpoint:
+
+    * ``{"project_group_id": "<id>"}`` — attach to an EXISTING project by id.
+      A missing id is a 404 (``project_not_found``) — the store never mints an
+      id on lookup, so attaching to an unknown id would strand a dangling tag.
+    * ``{"name": "<name>"}`` with no id — CREATE a project (server mints the id,
+      the store requires a caller-minted one) and attach the session to it.
+    * ``{}`` / ``{"project_group_id": ""}`` — UNTAG (clear the field).
+
+    Body must carry at most one of ``project_group_id`` / ``name``; supplying
+    both is a 400 (ambiguous — attach-existing vs create-new). The store is the
+    project record table (see ``project_store.ProjectStore``); this handler is
+    its only validated writer. Mirrors ``api_chat_slot_folder`` for the slot
+    ownership, rebind re-check, persist-with-rollback, and audit spans.
+    """
+
+    state: DashboardState = request.app["state"]
+    name = request.match_info["slot"]
+    slot = state._slots.get(name)
+    if not slot:
+        return web.json_response({"error": "not found"}, status=404)
+    # App ownership (App Kit §5.2) — deny-by-default, same as api_chat_slot_folder:
+    # tagging writes a session's own state (the tag re-injects on that session's
+    # next turn and joins it to a project group), so an app must not reach a
+    # session it does not own. Same 404 for both reasons (no existence oracle).
+    request_app = _effective_request_app(state, request)
+    if request_app and getattr(slot, "_app", "") != request_app:
+        sel().log_api_access(
+            caller=request_app,
+            operation="chat.slot_project_group",
+            outcome="denied",
+            source="app_isolation",
+            resources=f"slot={slot.key}",
+            error=(
+                "app cannot access unscoped slots"
+                if not getattr(slot, "_app", "")
+                else "app does not own this slot"
+            ),
+        )
+        return web.json_response({"error": "not found", "code": "slot_not_found"}, status=404)
+    # Capture the transcript key the ownership decision covered, BEFORE the
+    # body-parse await (same rebind window as api_chat_slot_folder).
+    authorized_history_key = slot_history_key(slot)
+    # Shared object-body guard: a valid-but-non-object JSON body
+    # ([], "s", 5, true, null) would otherwise reach the .get() below and turn a
+    # client mistake into a 500. allow_absent so a bare POST with no body is an
+    # untag (all fields default). Bounded cap: the body is a fixed set of
+    # control fields (an id or a name).
+    body, err = await read_bounded_json(request, allow_absent=True)
+    if err is not None:
+        return err
+
+    # ── validate + resolve the target project id (no store WRITE yet) ─────────
+    # Distinguish key ABSENT from key PRESENT-WITH-ANY-VALUE (incl. JSON null):
+    # untag is signalled by OMITTING both keys (or an explicit empty-string id),
+    # so a PRESENT key must carry a string. A present null/number/etc. is a 400,
+    # NOT a silent untag — otherwise {"name": null} or {"project_group_id": null}
+    # on a tagged slot would erase the tag (GPT-review data-loss BLOCK).
+    _MISSING = object()
+    raw_id = body.get("project_group_id", _MISSING)
+    raw_name = body.get("name", _MISSING)
+    id_present = raw_id is not _MISSING
+    name_present = raw_name is not _MISSING
+    if id_present and not isinstance(raw_id, str):
+        return web.json_response(
+            {"error": "project_group_id must be a string", "code": "bad_project_group_id"},
+            status=400,
+        )
+    if name_present and not isinstance(raw_name, str):
+        return web.json_response(
+            {"error": "name must be a string", "code": "bad_name"}, status=400
+        )
+    project_group_id = (raw_id if id_present else "").strip()
+    project_name = (raw_name if name_present else "").strip()
+    if project_group_id and name_present:
+        # Ambiguous: attach-existing and create-new are mutually exclusive.
+        return web.json_response(
+            {"error": "supply project_group_id OR name, not both", "code": "ambiguous_target"},
+            status=400,
+        )
+    if name_present and not project_name:
+        # A present but blank/whitespace name is a malformed CREATE, NOT an
+        # untag: untag is signalled by OMITTING name (and an empty id), so a
+        # caller who sent "name" clearly meant to create. Treating a blank name
+        # as an untag would silently ERASE an existing project tag (GPT-review
+        # data-loss BLOCK). Reject it; untag stays the name-absent path below.
+        return web.json_response(
+            {"error": "project name is required", "code": "empty_name"}, status=400
+        )
+
+    if project_group_id:
+        # ATTACH: fail-fast if the id is unknown. This read is ADVISORY, not
+        # transactional — a project deleted between here and the tag commit
+        # would leave a dangling tag. That is tolerated by design: the store's
+        # delete-always-proceeds contract means readers already bucket a
+        # dangling project_group_id as "unknown project" (never a crash), so we
+        # do not re-check under the lock. This only rejects the common
+        # never-existed case cheaply before taking the slot lock.
+        if state.projects.get_project(project_group_id) is None:
+            return web.json_response(
+                {"error": "project not found", "code": "project_not_found"}, status=404
+            )
+    # For the CREATE path we do NOT write the record here: create_project is
+    # committed INSIDE the lock below, only after the slot re-check passes, so a
+    # rebound/deleted slot (409) or a refused save cannot strand an orphan
+    # project record (Correctness-review HIGH). else (both empty) -> UNTAG.
+
+    # ── serialize re-check / (create) / mutate / persist / rollback ──────────
+    async with _slot_meta_txn_lock(state):
+        if state._slots.get(name) is not slot or slot_history_key(slot) != authorized_history_key:
+            source, caller = _audit_origin(request)
+            sel().log_api_access(
+                caller=caller,
+                operation="chat.slot_project_group",
+                outcome="denied",
+                source=source,
+                resources=name,
+                error="session was deleted or rebound",
+            )
+            return web.json_response(
+                {"error": "session was deleted or rebound", "code": "session_gone"}, status=409
+            )
+        # Whether THIS request minted a NEW project record (vs attached to an
+        # existing one, or untagged). ONLY a minted record may be deleted by the
+        # save-failure compensation below — deleting an attached-to, pre-existing
+        # record would orphan every OTHER session tagged into it (adversarial
+        # re-review Blocker: the old `if project_name` guard deleted on the
+        # attach-by-name path too).
+        created_record_id = ""
+        if project_name:
+            # CREATE-OR-ATTACH-BY-NAME. Inside the txn lock, first look for an
+            # existing project with this exact (case-sensitive, already-trimmed)
+            # name: if one exists, ATTACH to it rather than minting a second
+            # record. This makes the create path dedup by name — two sessions
+            # naming the same project land in ONE group, which is what the
+            # tagging UI's "New project" affordance means to a user (the store
+            # itself still permits same-name distinct ids for other callers;
+            # this is a policy of THIS validated create interface, not the
+            #
+            # THREAT MODEL: the name lookup is
+            # deliberately NOT scoped to an app-ownership predicate. KiroCrew's
+            # project coordination is a SINGLE-USER system — the human names the
+            # projects and decides which sessions join them; the user is the
+            # source of truth. "A project the caller cannot see" only exists in
+            # the App Kit sense (one installed APP's projects hidden from another
+            # APP); the human dashboard user has no app claim and is trusted with
+            # every project. Attach-by-id already applies NO per-project gate
+            # (any slot-owner attaches to any existing id — see the id branch
+            # above), so attach-by-name adds no authorization escalation within
+            # this model; it is the feature, not a leak. A multi-model reviewer
+            # (GPT) BLOCKed this as a cross-tenant oracle — a correct finding in a
+            # MULTI-TENANT frame that does not hold here, adjudicated as a
+            # model-scoped false positive. REVISIT ONLY IF apps ever mint project
+            # groups: then scope this lookup to the caller's visible set (the same
+            # predicate api_projects_coordination_list uses).
+            # store). First match wins; names are compared trimmed as stored.
+            # Best-effort IN-PROCESS: list_projects() is cache-only, so a record
+            # created by ANOTHER process since load is not seen and a cross-
+            # process duplicate can still be minted (tolerated — create is
+            # idempotent-by-id and the store permits same-name distinct ids).
+            existing = next(
+                (p for p in state.projects.list_projects() if p.name == project_name),
+                None,
+            )
+            if existing is not None:
+                project_group_id = existing.id
+            else:
+                # CREATE now that the attach is guaranteed to be applied to a
+                # live, still-authorized slot: the record and the slot tag commit
+                # together, so a failed persist below rolls back the tag AND
+                # leaves no orphan record (create_project's flock is a leaf
+                # acquisition — no cycle with the slot-meta txn lock). Server
+                # mints the id (store requires a caller-minted one).
+                try:
+                    record = state.projects.create_project(
+                        project_name, project_id=uuid.uuid4().hex[:12]
+                    )
+                except ValueError as exc:
+                    return web.json_response(
+                        {"error": str(exc), "code": "invalid_project"}, status=400
+                    )
+                except ProjectStoreBusy:
+                    return web.json_response(
+                        {"error": "project store busy, retry", "code": "store_busy"},
+                        status=503,
+                    )
+                project_group_id = record.id
+                created_record_id = record.id  # only THIS id may be rolled back
+        previous = slot.project_group_id
+        slot.project_group_id = project_group_id  # "" on the untag path
+        # NO await between the re-check/create and the mutation above.
+        if not await save_slot_off_loop(
+            state, slot, force=True, expected_history_key=authorized_history_key
+        ):
+            # Refused without writing: session deleted/rebound mid-persist. Roll
+            # back only while the field still holds THIS request's value (same
+            # guard as api_chat_slot_folder), and mark dirty so the periodic
+            # flush reconverges any provisional value it may have persisted.
+            if slot.project_group_id == project_group_id:
+                slot.project_group_id = previous
+            slot._dirty = True
+            # Compensate the CREATE: if THIS request MINTED the record, the tag
+            # it was created for did not persist, so delete it rather than leave
+            # an orphan project nothing references. Guarded on the minted id, NOT
+            # on `project_name`: on the attach-by-name path project_group_id is a
+            # PRE-EXISTING shared record, and deleting it would orphan every
+            # other session tagged into it (adversarial re-review Blocker). We
+            # are still under the slot-meta lock and just minted the id, so no
+            # concurrent session attached to it in this window.
+            if created_record_id:
+                state.projects.delete_project(created_record_id)
+            source, caller = _audit_origin(request)
+            sel().log_api_access(
+                caller=caller,
+                operation="chat.slot_project_group",
+                outcome="denied",
+                source=source,
+                resources=name,
+                error="session was deleted or rebound",
+            )
+            return web.json_response(
+                {"error": "session was deleted or rebound", "code": "session_gone"}, status=409
+            )
+    state.push_slots_update()
+    source, caller = _audit_origin(request)
+    sel().log_api_access(
+        caller=caller,
+        operation="chat.slot_project_group",
+        outcome="allowed",
+        source=source,
+        resources=name,
+    )
+    return web.json_response({"ok": True, "project_group_id": slot.project_group_id})

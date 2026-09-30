@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from aiohttp import web
 
-from kiro_crew.dashboard import chat, chat_voice, handlers, openai_compat
+from kiro_crew.dashboard import chat, chat_voice, handlers, openai_compat, project_panel
 from kiro_crew.dashboard.handlers import debug as debug_handlers
 
 
@@ -95,6 +95,20 @@ def register(app: web.Application) -> None:
     app.router.add_patch("/api/chat/slots/{slot}/pin", chat.api_chat_slot_pin)
     app.router.add_patch("/api/chat/slots/{slot}/todo", chat.api_chat_slot_todo)
     app.router.add_patch("/api/chat/slots/{slot}/mode", chat.api_chat_slot_mode)
+    app.router.add_post(
+        "/api/chat/slots/{slot}/project-group", chat.api_chat_slot_project_group
+    )
+    # Project-coordination panel (read-only browse view). Registered under a
+    # dedicated ``/api/coordination`` namespace, disjoint from the task-runner's
+    # dynamic ``/api/projects/{id}`` (routes/connections.py), so the two route
+    # trees never collide and ``coordination`` is never captured as a project id.
+    app.router.add_get(
+        "/api/coordination/{id}/panel", project_panel.api_project_panel
+    )
+    # Project-coordination record list (the tagging UI's create-or-pick source).
+    app.router.add_get(
+        "/api/coordination/projects", project_panel.api_projects_coordination_list
+    )
     # Message pins
     app.router.add_get("/api/chat/pins", chat.api_chat_pins_list)
     app.router.add_post("/api/chat/pins", chat.api_chat_pins_create)

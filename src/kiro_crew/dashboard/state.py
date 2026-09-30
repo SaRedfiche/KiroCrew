@@ -115,6 +115,9 @@ from kiro_crew.release_channel import channel as _release_channel_of_build
 from kiro_crew.safety_override import cached_disabled_approval_modes, safety_override
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
 from kiro_crew.security.credential_sources import CredentialEvidence
+from kiro_crew.dashboard.collision_index import CollisionIndex
+from kiro_crew.dashboard.collision_notify import NotifyOnce
+from kiro_crew.dashboard.worktree_index import WorktreeIndex
 from kiro_crew.sel import sel
 from kiro_crew.session_compaction import (
     COMPACT_OUTCOME_COMPACTED,
@@ -136,12 +139,26 @@ if TYPE_CHECKING:
     )
     from kiro_crew.dashboard.listener_guard import ListenerGuard  # noqa: F401
     from kiro_crew.dashboard.loop_watchdog import LoopStallWatchdog  # noqa: F401
+    from kiro_crew.dashboard.project_store import ProjectStore  # noqa: F401
     from kiro_crew.messaging.transport import MessagingTransport  # noqa: F401
     from kiro_crew.power import SleepInhibitor  # noqa: F401
     from kiro_crew.slack.outbound import PostedOptions  # noqa: F401
     from kiro_crew.subagent import SubagentDelivery
 
 logger = logging.getLogger(__name__)
+
+
+def _default_project_store() -> "ProjectStore":
+    """Construct a ProjectStore at the default data dir.
+
+    Imported lazily (not at module top) because state.py is imported very
+    broadly and the store pulls in the atomic-write/config-paths chain; a
+    function-local import keeps that off the module-load path and avoids any
+    import cycle, while still yielding one shared instance per DashboardState.
+    """
+    from kiro_crew.dashboard.project_store import ProjectStore
+
+    return ProjectStore()
 
 #: Cache for :meth:`DashboardState.served_bundle_id` — the served frontend
 #: entry point's ``(mtime_ns, size)`` -> short content hash. One slot: there is
@@ -2674,6 +2691,10 @@ class _ChatSlot:
         "memory_store",
         "_memory_assignment_from_history",
         "project",
+        # Project-coordination grouping tag (Phase 1). NOT the cwd path
+        # (``project``); this is an opaque id into ``projects.json`` grouping
+        # sibling sessions that work the same project. Empty = untagged.
+        "project_group_id",
         "created_at",
         "messages",
         "total_messages",
@@ -2860,6 +2881,7 @@ class _ChatSlot:
         "_pending_rewrite",
         "_file_changes",
         "_turn_reply_mids",
+        "_collision_writes",
         "linked_session_key",
         # Remote-execution binding: this slot lives in the LOCAL list and local
         # history, but its turns run on a connected peer crew. See
@@ -3004,6 +3026,9 @@ class _ChatSlot:
         # that admission boundary; this marker is not persisted in the transcript.
         self._memory_assignment_from_history = False
         self.project: str = ""
+        # Project-coordination grouping tag (Phase 1): opaque id into
+        # projects.json, distinct from ``project`` (the cwd path). "" = untagged.
+        self.project_group_id: str = ""
         # Remote-execution binding. ``executor`` is "local" for every ordinary
         # slot; "remote" means the turn is dispatched over an instance tunnel to
         # ``instance_id`` and run by the peer's slot ``remote_slot``. The local
@@ -3929,6 +3954,12 @@ class _ChatSlot:
         # mid-turn (a workflow or sub-agent completion) is never this turn's
         # reply, whatever its position. Reset where the turn's start is captured.
         self._turn_reply_mids: list[str] = []
+        # Same-file collision (Signal 1): per-turn absolute paths written by the
+        # file tool, accumulated on the hot loop as a cheap list append and
+        # drained OFF-loop by the per-turn flush (which derives repo_id /
+        # repo_rel_path and records into state.collisions). Separate from
+        # _file_changes so the flush that feeds file-chip diffs is untouched.
+        self._collision_writes: list[str] = []
         self.linked_session_key: str = ""  # when set, _run_chat uses this as session key
         # Where the turn CURRENTLY in flight actually started, as opposed to
         # where the slot would route a new one. The two diverge whenever the
@@ -5750,6 +5781,7 @@ class DashboardState:
         task_runner: TaskRunner | None = None,
         slack_client: Any = None,
         owner_id: str = "",
+        projects: "ProjectStore | None" = None,
     ):
         self.sessions = sessions
         # The decisions seam's LLM lane needs ONE callable that runs a prompt on a
@@ -5771,6 +5803,24 @@ class DashboardState:
             logger.debug("decisions: LLM lane runner not registered", exc_info=True)
         self.crons = crons
         self.lessons = lessons
+        # Project-coordination record store (project_group_id -> {id,name,repos[]}).
+        # A shared, long-lived instance like self.crons/self.lessons: its
+        # mutations _sync_for_write under flock so the shared cache stays current
+        # on writes, and its reads are cache-only by design. Defaulted so the
+        # boot chain and test-state (__new__) construction need not thread it;
+        # constructs a store at config_dir() when the caller does not supply one.
+        self.projects = projects if projects is not None else _default_project_store()
+        # Same-file collision index (Signal 1). In-memory, process-local runtime
+        # state — NOT a durable store: collision data is recency-windowed and
+        # only meaningful against currently-live sessions, so nothing survives a
+        # restart. Fed off-loop from the per-turn file-write flush, evaluated
+        # and notified there (Signal 2 commit), and read by the project panel.
+        self.collisions = CollisionIndex()
+        # Same-worktree collision index (Signal 2): live session -> worktree_root
+        # co-tenancy, and the per-process notify-once dedupe for both signals.
+        # In-memory/process-local like self.collisions.
+        self.worktrees = WorktreeIndex()
+        self.collision_notify_once = NotifyOnce()
         self.start_time = start_time
         # Published only at the final boot-to-ready boundary in server.py.
         # The socket binds earlier, so /api/ready can truthfully return 503

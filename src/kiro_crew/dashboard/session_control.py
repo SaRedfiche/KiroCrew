@@ -1753,6 +1753,7 @@ async def create_session(
     model: str = "",
     caller_fenced: bool | None = None,
     dry_run: bool = False,
+    project_group_id: str = "",
 ) -> dict[str, Any]:
     """Open a new session in the caller's workspace, persisted at birth.
 
@@ -2291,6 +2292,22 @@ async def create_session(
                 status=409,
             )
 
+    if project_group_id:
+        # ATTACH-ONLY into an EXISTING project group: a coordinator spawns a
+        # worker INTO a project it is already in, so an unknown id is refused
+        # (never create-by-name here — that is the tagging API's job, and the
+        # store never mints an id on lookup, so attaching to an unknown id would
+        # strand a dangling tag). Mirrors api_chat_slot_project_group's attach
+        # path. The read is cache-only and cheap (ProjectStore reads take no
+        # lock); a project deleted between here and the assignment is tolerated
+        # the same way the tag path tolerates it — readers bucket a dangling
+        # project_group_id as "unknown project", never a crash.
+        projects = getattr(state, "projects", None)
+        if projects is None or projects.get_project(project_group_id) is None:
+            raise SessionControlError(
+                "project not found", code="project_group_not_found", status=404
+            )
+
     # Re-resolved and re-gated HERE, adjacent to the allocation, because every
     # decision above was made before this coroutine suspended -- for the
     # project directory, agent bindings, memory delegation and folder confirmation -- and the
@@ -2516,6 +2533,11 @@ async def create_session(
             # exactly as it treats a human pick rather than as a backfilled value.
             slot.model = model_name
             slot._model_pick_gen += 1
+        if project_group_id:
+            # Tag the worker into the coordinator's project group at birth, so it
+            # is a member the project panel's rollup (P2.2) surfaces immediately.
+            # Same synchronous window as folder_id; persisted below.
+            slot.project_group_id = project_group_id
         if title.strip():
             slot.title = sanitize_outbound(title.strip())[:200]
             slot._titled = True
@@ -2593,6 +2615,14 @@ async def create_session(
                     # dict is the only record, and without it a restart would
                     # bring the session back on the default model.
                     **({"model": slot.model} if model_name else {}),
+                    # Only when tagged, mirroring folder_id: for an idle newborn
+                    # this dict is the only on-disk record of the group membership,
+                    # and project_group_id is a SLOT_OWNED_META key rehydrate reads.
+                    **(
+                        {"project_group_id": slot.project_group_id}
+                        if slot.project_group_id
+                        else {}
+                    ),
                     # Creator attribution, only when this entry point set it. The
                     # member ownership boundary in `authorize_target` reads it, so
                     # losing it on restart would strand every worker a member
