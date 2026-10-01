@@ -349,6 +349,7 @@ from kiro_crew.dashboard.collision_derive import derive_repo_context, repo_rel_f
 from kiro_crew.dashboard.collision_notify import (
     notification_body,
     samefile_should_notify,
+    sameremote_should_notify,
     sameworktree_should_notify,
 )
 from kiro_crew.dashboard.handlers import (
@@ -2153,6 +2154,7 @@ async def _flush_collision_writes(state: Any, slot: "_ChatSlot", session: str) -
     if index is None:
         return
     worktrees = getattr(state, "worktrees", None)
+    remote_targets = getattr(state, "remote_targets", None)
     notify_once = getattr(state, "collision_notify_once", None)
     cwd = getattr(slot, "project", "") or ""
 
@@ -2180,9 +2182,13 @@ async def _flush_collision_writes(state: Any, slot: "_ChatSlot", session: str) -
         index.prune()
         if worktrees is not None:
             worktrees.prune(live_sessions=live_keys)
-        # Derive the cwd's repo identity ONCE (repo_id + repo_root), used for
-        # Signal-1 recording and Signal-2 worktree co-tenancy. A non-repo cwd
-        # yields None, so nothing is recorded and the worktree entry is cleared.
+        if remote_targets is not None:
+            remote_targets.prune(live_sessions=live_keys)
+        # Derive the cwd's repo identity ONCE (repo_id + repo_root +
+        # remote_target), used for Signal-1 recording, Signal-2 worktree
+        # co-tenancy, and Signal-3 push-target co-targeting. A non-repo cwd
+        # yields None, so nothing is recorded and the worktree/target entries
+        # are cleared.
         ctx = derive_repo_context(cwd) if cwd else None
         # The collision grouping key, decoupled from any tagging/memory model:
         # the ONE seam. DERIVE it fresh every turn — never read back any slot
@@ -2196,6 +2202,11 @@ async def _flush_collision_writes(state: Any, slot: "_ChatSlot", session: str) -
         scope = ctx.repo_id if ctx is not None else ""
         if worktrees is not None:
             worktrees.set_worktree(session, ctx.repo_root if ctx is not None else "")
+        if remote_targets is not None:
+            # Signal 3: the session's current push target (canonical remote +
+            # upstream branch), or "" when the branch has no upstream (which
+            # set_target drops — no shared target, no race).
+            remote_targets.set_target(session, ctx.remote_target if ctx is not None else "")
         if notify_once is not None:
             # Bounded-lifecycle sweep of the dedupe store (GPT-review OOM class):
             # drop signatures whose sessions are all closed.
@@ -2263,6 +2274,24 @@ async def _flush_collision_writes(state: Any, slot: "_ChatSlot", session: str) -
             )
             if sig:
                 notes.append({"signal": "same-worktree", "sessions": len(members)})
+        # Signal 3 (default-notify, high severity): sessions sharing one push
+        # target — the "two sessions, one PR" race. Independent of Signals 1/2:
+        # the co-targeters may be in SEPARATE worktrees editing DIFFERENT files,
+        # so this is NOT deduped against the same-worktree ``members`` set (a
+        # different relation). Evaluates even on a NO-WRITE turn — two sessions
+        # can share an upstream without either writing this turn.
+        if remote_targets is not None and ctx.remote_target:
+            rt_members = remote_targets.cotargets(
+                ctx.remote_target, live_sessions=live_keys, is_fork_pair=_is_fork_pair
+            )
+            if len(rt_members) >= 2:
+                sig = sameremote_should_notify(
+                    remote_target=ctx.remote_target,
+                    sessions=rt_members,
+                    notify_once=notify_once,
+                )
+                if sig:
+                    notes.append({"signal": "same-remote", "sessions": len(rt_members)})
         # Signal 1 (record-first; notify only under suppression, for files THIS
         # turn touched). Skip a key already covered by the same-worktree note
         # (its sessions are a subset of that tree's cotenants). ``scope`` is the

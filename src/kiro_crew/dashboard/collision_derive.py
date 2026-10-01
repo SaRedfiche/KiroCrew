@@ -114,6 +114,48 @@ def canonicalize_remote(url: str) -> str:
     return host.lower() + slash + path
 
 
+def derive_remote_target(cwd: str) -> str:
+    """The current branch's push target, or ``""`` when it has none.
+
+    Shape: ``canonicalize_remote(push_url) + "#" + remote_ref`` — e.g.
+    ``github.com/org/repo#feature/x``. Two sessions on differently-named local
+    branches that both track the same remote branch therefore produce the SAME
+    target and collide (Signal 3); a session with no upstream, a detached HEAD,
+    or a never-pushed branch produces ``""`` and contributes nothing.
+
+    Resolution:
+
+    * ``git rev-parse --abbrev-ref --symbolic-full-name @{u}`` gives the
+      upstream as ``<remote>/<remote_ref>`` (e.g. ``origin/feature/x``). It
+      fails (returns None) when no upstream is set — the common no-target case.
+    * The remote NAME is split off and resolved to its PUSH url
+      (``remote.<name>.pushurl`` if set, else ``remote.<name>.url``), so a repo
+      with a distinct pushurl targets the real destination. The url is
+      canonicalized so scp-form and https-form of one remote match.
+    * The remainder after the first ``/`` is the remote branch ref, preserved
+      verbatim (branch names are case-sensitive).
+
+    Best-effort and non-raising: any git miss yields ``""``.
+    """
+    if not cwd:
+        return ""
+    upstream = _run_git(cwd, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+    if not upstream or "/" not in upstream:
+        return ""
+    remote_name, _, remote_ref = upstream.partition("/")
+    if not remote_name or not remote_ref:
+        return ""
+    push_url = _run_git(cwd, "config", "--get", f"remote.{remote_name}.pushurl") or _run_git(
+        cwd, "config", "--get", f"remote.{remote_name}.url"
+    )
+    if not push_url:
+        return ""
+    canonical = canonicalize_remote(push_url)
+    if not canonical:
+        return ""
+    return f"{canonical}#{remote_ref}"
+
+
 @dataclass(frozen=True)
 class RepoContext:
     """The cwd-level git identity, derived ONCE per session cwd per flush.
@@ -122,18 +164,27 @@ class RepoContext:
     realpath'd toplevel used only to compute repo-relative paths. Deriving this
     once and reusing it for every path written this turn collapses the per-path
     git spawns from ~3N to ~2 (Security-review Medium: executor starvation).
+
+    ``remote_target`` is the current branch's push target —
+    ``canonicalize_remote(push_url) + "#" + remote_ref`` — or ``""`` when the
+    branch has no configured upstream (detached HEAD, a never-pushed branch).
+    It feeds Signal 3 (remote-target collision) and is derived in the same
+    off-loop pass as ``repo_id``.
     """
 
     repo_id: str
     repo_root: str
+    remote_target: str = ""
 
 
 def derive_repo_context(cwd: str) -> RepoContext | None:
-    """Derive the cwd-level (repo_id, repo_root) with the git calls run ONCE.
+    """Derive the cwd-level (repo_id, repo_root, remote_target) off-loop.
 
     Returns None for a non-repo cwd or a git failure. Blocking — call via
     ``asyncio.to_thread``. repo_id = canonicalized origin remote else realpath'd
     ``--git-common-dir`` (stable across worktrees; NOT the toplevel).
+    remote_target = the current branch's push target (Signal 3), or ``""`` when
+    it has no upstream.
     """
     if not cwd:
         return None
@@ -156,7 +207,8 @@ def derive_repo_context(cwd: str) -> RepoContext | None:
             )
     if not repo_id:
         return None
-    return RepoContext(repo_id=repo_id, repo_root=repo_root)
+    remote_target = derive_remote_target(cwd)
+    return RepoContext(repo_id=repo_id, repo_root=repo_root, remote_target=remote_target)
 
 
 def repo_rel_for(repo_root: str, abs_file_path: str) -> str | None:

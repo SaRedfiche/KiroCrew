@@ -24,9 +24,10 @@ would mute it within a day. So:
   hash of it is dictionary-attackable against enumerable repo names. Rather
   than obfuscate a guessable identity, nothing scope-derived is persisted:
   the body states only the signal and the session count, and notes group by
-  SIGNAL TYPE (``collision:same-worktree`` / ``collision:same-file``). A
-  reader resolves which sessions are involved from live session state, out of
-  band; the body carries no name and no click-through.
+  SIGNAL TYPE (``collision:same-worktree`` / ``collision:same-file`` /
+  ``collision:same-remote``). A reader resolves which sessions are involved
+  from live session state, out of band; the body carries no name and no
+  click-through.
 
 This module is pure decision + dedupe state; it does not call
 ``send_notification`` (the caller does, with the returned body). Thread-safe.
@@ -124,13 +125,14 @@ class NotifyOnce:
 
 def _sig(signal: str, contended: str, sessions: frozenset[str]) -> str:
     """Stable dedupe signature. Sorted sessions so order does not matter; the
-    contended thing is a repo_rel_path (same-file) or a worktree_root
-    (same-worktree). Process-local, never persisted — so it may carry the raw
-    contended path; the persisted notification body and group_key carry no
-    scope value at all. Each component is length-capped so a retained signature
-    string stays bounded regardless of an agent-chosen path length or
-    session-set size (collision resistance is unaffected: the cap is far above
-    any real repo path or live-session set)."""
+    contended thing is a repo_rel_path (same-file), a worktree_root
+    (same-worktree) or a remote_target (same-remote). Process-local, never
+    persisted — so it may carry the raw scope id and the raw contended path; the
+    persisted notification body and group_key carry no scope value at all. Each
+    component is length-capped so a retained signature string stays bounded
+    regardless of an agent-chosen path length or session-set size (collision
+    resistance is unaffected: the cap is far above any real repo path or
+    live-session set)."""
     cap = _SIG_COMPONENT_MAX
     return "|".join(
         [
@@ -179,6 +181,22 @@ def sameworktree_should_notify(
     return sig if notify_once.should_notify(sig, sessions) else None
 
 
+def sameremote_should_notify(
+    *,
+    remote_target: str,
+    sessions: frozenset[str],
+    notify_once: NotifyOnce,
+) -> str | None:
+    """Return a dedupe signature to notify on for a remote-target collision, or
+    None if already notified. Same-remote-target notifies by default (no churn
+    suppression) — like same-worktree it is a rare, high-severity signal (two
+    sessions racing one push target / one PR). ``remote_target`` is the
+    fully-qualified contended thing (canonical remote url + '#' + upstream ref),
+    so it needs no separate scope key — two sessions collide iff they share it."""
+    sig = _sig("same-remote", remote_target, sessions)
+    return sig if notify_once.should_notify(sig, sessions) else None
+
+
 def notification_body(*, signal: str, session_count: int) -> str:
     """The notification body — the signal type and the session count only, and
     NOTHING scope-derived (see the module docstring): the ``repo_id`` grouping
@@ -192,7 +210,11 @@ def notification_body(*, signal: str, session_count: int) -> str:
     what = (
         "sessions are working the same worktree (live filesystem race)"
         if signal == "same-worktree"
-        else "sessions edited the same file (possible merge conflict)"
+        else (
+            "sessions push to the same remote branch (one-PR race)"
+            if signal == "same-remote"
+            else "sessions edited the same file (possible merge conflict)"
+        )
     )
     n = max(session_count, 2)  # a collision is >= 2 by definition
     return f"Session coordination: {n} {what}."
