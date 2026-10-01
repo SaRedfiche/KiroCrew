@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import types
 
@@ -10,6 +11,7 @@ import pytest
 from kiro_crew.dashboard.chat_runner import _flush_collision_writes
 from kiro_crew.dashboard.collision_index import CollisionIndex, FileKey
 from kiro_crew.dashboard.collision_notify import NotifyOnce
+from kiro_crew.dashboard.remote_target_index import RemoteTargetIndex
 from kiro_crew.dashboard.worktree_index import WorktreeIndex
 
 
@@ -62,6 +64,7 @@ def _state(*slots):
     st = types.SimpleNamespace(
         collisions=CollisionIndex(),
         worktrees=WorktreeIndex(),
+        remote_targets=RemoteTargetIndex(),
         collision_notify_once=NotifyOnce(),
         notification_bus=_CapturingBus(),
     )
@@ -250,6 +253,193 @@ class TestSignal2Notify:
         body = state.notification_bus.pushed[0].body
         assert "same file" in body or "merge conflict" in body
         assert "worktree" not in body
+
+
+class TestSignal3Notify:
+    def _bare(self, path):
+        path.mkdir(parents=True, exist_ok=True)
+        _git(path, "init", "-q", "--bare")
+        return path
+
+    def _tracking_clone(self, path, bare, *, local_branch, remote_ref, remote_url=None):
+        """A real repo whose local_branch tracks remote_ref. Each clone pushes to
+        its OWN bare upstream (so two clones targeting the same ref do not
+        conflict on push), and when remote_url is given both origin urls are
+        rewritten to it so their DERIVED targets match while @{u} stays valid."""
+        own_bare = bare if bare is not None else self._bare(path.parent / f"{path.name}-up.git")
+        path.mkdir(parents=True, exist_ok=True)
+        _git(path, "init", "-q")
+        _git(path, "config", "user.email", "t@t")
+        _git(path, "config", "user.name", "t")
+        _git(path, "remote", "add", "origin", str(own_bare))
+        (path / "f.py").write_text("x", encoding="utf-8")
+        _git(path, "add", "-A")
+        _git(path, "commit", "-q", "-m", "init")
+        if local_branch != "master":
+            _git(path, "branch", "-m", local_branch)
+        _git(path, "push", "-q", "-u", "origin", f"{local_branch}:{remote_ref}")
+        if remote_url is not None:
+            _git(path, "config", "remote.origin.url", remote_url)
+        return path
+
+    @pytest.mark.asyncio
+    async def test_same_remote_target_notifies_even_in_separate_worktrees(self, tmp_path):
+        """The real 'two sessions, one PR' incident: two sessions in SEPARATE
+        clones, editing DIFFERENT files, whose branches both track one upstream
+        ref -> a same-remote notification. Invisible to Signals 1 and 2."""
+        from kiro_crew.dashboard.chat_utils import effective_session_key
+
+        # Each clone has its OWN bare (independent-history pushes do not
+        # conflict); both origin urls rewritten to one shared url so their
+        # derived targets match. Differently-NAMED local branches, ONE remote ref.
+        shared = "git@github.com:org/repo.git"
+        a = self._tracking_clone(
+            tmp_path / "a",
+            None,
+            local_branch="alice/work",
+            remote_ref="feature/x",
+            remote_url=shared,
+        )
+        b = self._tracking_clone(
+            tmp_path / "b",
+            None,
+            local_branch="bob/work",
+            remote_ref="feature/x",
+            remote_url=shared,
+        )
+        fa = a / "only-in-a.py"
+        fa.write_text("x", encoding="utf-8")
+        slot_a = _slot(a, [str(fa)], key="chat-a")
+        slot_b = _slot(b, [], key="chat-b")
+        state = _state(slot_a, slot_b)
+        # Pre-place B's push target (as if B's flush ran first).
+        from kiro_crew.dashboard.collision_derive import derive_remote_target
+
+        _target_b = await asyncio.to_thread(derive_remote_target, str(b))
+        state.remote_targets.set_target(effective_session_key(slot_b), _target_b)
+        await _flush_collision_writes(state, slot_a, effective_session_key(slot_a))
+        assert len(state.notification_bus.pushed) == 1
+        pushed = state.notification_bus.pushed[0]
+        assert pushed.group_key == "collision:same-remote"
+        body = pushed.body
+        assert "remote branch" in body or "PR" in body
+        # No leak: neither the remote host/path nor the ref reaches the body.
+        assert "github" not in body and "feature/x" not in body and "#" not in body
+        # Dedupe: a second identical flush does not re-notify.
+        slot_a._collision_writes = [str(fa)]
+        await _flush_collision_writes(state, slot_a, effective_session_key(slot_a))
+        assert len(state.notification_bus.pushed) == 1
+
+    @pytest.mark.asyncio
+    async def test_distinct_upstreams_do_not_notify(self, tmp_path):
+        """Same repo, DIFFERENT upstream branches -> no shared push target ->
+        no same-remote note."""
+        from kiro_crew.dashboard.chat_utils import effective_session_key
+        from kiro_crew.dashboard.collision_derive import derive_remote_target
+
+        bare = self._bare(tmp_path / "up.git")
+        a = self._tracking_clone(tmp_path / "a", bare, local_branch="x", remote_ref="feature/a")
+        b = self._tracking_clone(tmp_path / "b", bare, local_branch="y", remote_ref="feature/b")
+        fa = a / "a.py"
+        fa.write_text("x", encoding="utf-8")
+        slot_a = _slot(a, [str(fa)], key="chat-a")
+        slot_b = _slot(b, [], key="chat-b")
+        state = _state(slot_a, slot_b)
+        _target_b = await asyncio.to_thread(derive_remote_target, str(b))
+        state.remote_targets.set_target(effective_session_key(slot_b), _target_b)
+        await _flush_collision_writes(state, slot_a, effective_session_key(slot_a))
+        assert state.notification_bus.pushed == []
+
+    @pytest.mark.asyncio
+    async def test_no_write_turn_still_evaluates_same_remote(self, tmp_path):
+        """Two sessions sharing a push target but neither writing this turn
+        still notifies (Signal 3 evaluates on an empty write set, like Signal 2).
+        """
+        from kiro_crew.dashboard.chat_utils import effective_session_key
+        from kiro_crew.dashboard.collision_derive import derive_remote_target
+
+        bare = None  # own bare per clone; shared url makes targets match
+        a = self._tracking_clone(
+            tmp_path / "a",
+            bare,
+            local_branch="x",
+            remote_ref="main",
+            remote_url="git@github.com:org/repo.git",
+        )
+        b = self._tracking_clone(
+            tmp_path / "b",
+            bare,
+            local_branch="y",
+            remote_ref="main",
+            remote_url="git@github.com:org/repo.git",
+        )
+        slot_a = _slot(a, [], key="chat-a")  # NO writes this turn
+        slot_b = _slot(b, [], key="chat-b")
+        state = _state(slot_a, slot_b)
+        state.remote_targets.set_target(
+            effective_session_key(slot_b), await asyncio.to_thread(derive_remote_target, str(b))
+        )
+        await _flush_collision_writes(state, slot_a, effective_session_key(slot_a))
+        assert len(state.notification_bus.pushed) == 1
+        assert "remote branch" in state.notification_bus.pushed[0].body
+
+    @pytest.mark.asyncio
+    async def test_fork_pair_sharing_upstream_does_not_notify(self, tmp_path):
+        """A fork momentarily sharing the parent's upstream is not the hazard
+        (same conservative fork exclusion as Signals 1 and 2)."""
+        from kiro_crew.dashboard.chat_utils import effective_session_key
+        from kiro_crew.dashboard.collision_derive import derive_remote_target
+
+        a = self._tracking_clone(
+            tmp_path / "a",
+            None,
+            local_branch="x",
+            remote_ref="main",
+            remote_url="git@github.com:org/repo.git",
+        )
+        b = self._tracking_clone(
+            tmp_path / "b",
+            None,
+            local_branch="y",
+            remote_ref="main",
+            remote_url="git@github.com:org/repo.git",
+        )
+        parent = _slot(a, [], key="chat-parent")
+        child = _slot(b, [], key="chat-child")
+        child.forked_from = effective_session_key(parent)
+        state = _state(parent, child)
+        state.remote_targets.set_target(
+            effective_session_key(child), await asyncio.to_thread(derive_remote_target, str(b))
+        )
+        await _flush_collision_writes(state, parent, effective_session_key(parent))
+        assert state.notification_bus.pushed == []
+
+    @pytest.mark.asyncio
+    async def test_same_remote_and_same_worktree_emit_two_distinct_notes(self, tmp_path):
+        """Signal 3 is NOT deduped against Signal 2 — two sessions sharing BOTH
+        a worktree AND a push target are two distinct hazards and emit two
+        notes (a shared tree and a shared PR are different failures)."""
+        import os as _os
+
+        from kiro_crew.dashboard.chat_utils import effective_session_key
+        from kiro_crew.dashboard.collision_derive import derive_remote_target
+
+        bare = self._bare(tmp_path / "up.git")
+        # Both sessions in ONE clone (shared worktree) tracking ONE upstream.
+        repo = self._tracking_clone(tmp_path / "r", bare, local_branch="x", remote_ref="main")
+        f = repo / "a.py"
+        f.write_text("x", encoding="utf-8")
+        slot_a = _slot(repo, [str(f)], key="chat-a")
+        slot_b = _slot(repo, [], key="chat-b")
+        state = _state(slot_a, slot_b)
+        wt = _os.path.realpath(str(repo))
+        state.worktrees.set_worktree(effective_session_key(slot_b), wt)
+        state.remote_targets.set_target(
+            effective_session_key(slot_b), await asyncio.to_thread(derive_remote_target, str(repo))
+        )
+        await _flush_collision_writes(state, slot_a, effective_session_key(slot_a))
+        signals = {p.group_key for p in state.notification_bus.pushed}
+        assert signals == {"collision:same-worktree", "collision:same-remote"}
 
 
 class TestFlush:

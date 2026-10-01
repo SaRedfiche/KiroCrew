@@ -9,6 +9,7 @@ import pytest
 
 from kiro_crew.dashboard.collision_derive import (
     canonicalize_remote,
+    derive_remote_target,
     derive_repo_context,
     repo_rel_for,
 )
@@ -168,3 +169,153 @@ class TestNoSandboxBackendDegradesToNone:
         # rather than propagate SandboxUnavailableError.
         assert cd.derive_repo_context(str(tmp_path)) is None
         assert cd._run_git(str(tmp_path), "rev-parse", "--show-toplevel") is None
+
+
+def _init_bare(path):
+    path.mkdir(parents=True, exist_ok=True)
+    _git(path, "init", "-q", "--bare")
+    return path
+
+
+def _repo_tracking(path, upstream_bare, *, local_branch, remote_ref, remote_url=None):
+    """A real repo whose ``local_branch`` tracks ``remote_ref``. A real push to a
+    bare upstream establishes the tracking ref so ``@{u}`` resolves; when
+    ``remote_url`` is given (URL-shape tests) the origin url is REWRITTEN to it
+    afterward, so the derived target reflects that spelling while ``@{u}`` stays
+    valid."""
+    bare = (
+        upstream_bare
+        if upstream_bare is not None
+        else _init_bare(path.parent / f"{path.name}-up.git")
+    )
+    path.mkdir(parents=True, exist_ok=True)
+    _git(path, "init", "-q")
+    _git(path, "config", "user.email", "t@t")
+    _git(path, "config", "user.name", "t")
+    _git(path, "remote", "add", "origin", str(bare))
+    (path / "f.py").write_text("x", encoding="utf-8")
+    _git(path, "add", "-A")
+    _git(path, "commit", "-q", "-m", "init")
+    if local_branch != "master":
+        _git(path, "branch", "-m", local_branch)
+    _git(path, "push", "-q", "-u", "origin", f"{local_branch}:{remote_ref}")
+    if remote_url is not None:
+        # Rewrite the fetch url to the spelling under test; the tracking ref
+        # created by the push above keeps @{u} resolvable.
+        _git(path, "config", "remote.origin.url", remote_url)
+    return path
+
+
+class TestDeriveRemoteTarget:
+    def test_upstream_resolves_to_canonical_target(self, tmp_path):
+        bare = _init_bare(tmp_path / "up.git")
+        repo = _repo_tracking(
+            tmp_path / "r", bare, local_branch="feature/x", remote_ref="feature/x"
+        )
+        target = derive_remote_target(str(repo))
+        # The remote URL is a local path (the bare repo) -> canonicalized as-is
+        # with no host; the ref is appended after '#'.
+        assert target.endswith("#feature/x")
+        assert target == f"{canonicalize_remote(str(bare))}#feature/x"
+
+    def test_local_branch_name_does_not_appear__only_upstream_ref(self, tmp_path):
+        # Two sessions on DIFFERENTLY-named local branches tracking the SAME
+        # remote ref must produce the SAME target (the hazard is the shared
+        # push destination, not the local name). Each clone has its own bare
+        # upstream (so the two independent-history pushes do not conflict), with
+        # both origin urls rewritten to one shared canonical url.
+        shared = "git@github.com:org/repo.git"
+        a = _repo_tracking(
+            tmp_path / "a", None, local_branch="alice/work", remote_ref="main", remote_url=shared
+        )
+        b = _repo_tracking(
+            tmp_path / "b", None, local_branch="bob/work", remote_ref="main", remote_url=shared
+        )
+        ta, tb = derive_remote_target(str(a)), derive_remote_target(str(b))
+        assert ta and ta == tb
+        assert ta.endswith("#main")
+        assert ta == "github.com/org/repo#main"
+
+    def test_distinct_upstream_refs_differ(self, tmp_path):
+        a = _repo_tracking(
+            tmp_path / "a",
+            None,
+            local_branch="x",
+            remote_ref="feature/a",
+            remote_url="git@github.com:org/repo.git",
+        )
+        b = _repo_tracking(
+            tmp_path / "b",
+            None,
+            local_branch="y",
+            remote_ref="feature/b",
+            remote_url="git@github.com:org/repo.git",
+        )
+        assert derive_remote_target(str(a)) != derive_remote_target(str(b))
+
+    def test_no_upstream_returns_empty(self, tmp_path):
+        # A committed branch with NO tracking configured contributes no target.
+        repo = _init_repo(tmp_path / "r", remote="git@github.com:org/repo.git")
+        (repo / "f.py").write_text("x", encoding="utf-8")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "init")
+        assert derive_remote_target(str(repo)) == ""
+
+    def test_non_repo_cwd_returns_empty(self, tmp_path):
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        assert derive_remote_target(str(plain)) == ""
+
+    def test_scp_and_https_upstream_remotes_produce_same_target(self, tmp_path):
+        # scp-form and https-form of one remote canonicalize equal, so two
+        # sessions configured with different URL spellings of the same remote
+        # still collide. Uses the URL-shape path (no reachable push).
+        a = _repo_tracking(
+            tmp_path / "a",
+            None,
+            local_branch="x",
+            remote_ref="main",
+            remote_url="git@github.com:org/repo.git",
+        )
+        b = _repo_tracking(
+            tmp_path / "b",
+            None,
+            local_branch="y",
+            remote_ref="main",
+            remote_url="https://github.com/org/repo",
+        )
+        ta, tb = derive_remote_target(str(a)), derive_remote_target(str(b))
+        assert ta == tb == "github.com/org/repo#main"
+
+    def test_pushurl_wins_over_fetch_url(self, tmp_path):
+        # When remote.origin.pushurl is set, the push target uses it (the real
+        # destination), not the fetch url.
+        repo = _repo_tracking(
+            tmp_path / "a",
+            None,
+            local_branch="x",
+            remote_ref="main",
+            remote_url="https://github.com/org/fetch-mirror",
+        )
+        _git(repo, "config", "remote.origin.pushurl", "git@github.com:org/real-push.git")
+        assert derive_remote_target(str(repo)) == "github.com/org/real-push#main"
+
+    def test_git_failure_returns_empty(self, tmp_path, monkeypatch):
+        import kiro_crew.dashboard.collision_derive as cd
+
+        def _boom(*a, **k):
+            raise OSError("git exploded")
+
+        monkeypatch.setattr(cd.subprocess, "run", _boom)
+        assert cd.derive_remote_target(str(tmp_path)) == ""
+
+    def test_context_carries_remote_target(self, tmp_path):
+        # derive_repo_context must populate remote_target in the same off-loop
+        # pass (the flush reuses it).
+        bare = _init_bare(tmp_path / "up.git")
+        repo = _repo_tracking(
+            tmp_path / "r", bare, local_branch="feature/x", remote_ref="feature/x"
+        )
+        ctx = derive_repo_context(str(repo))
+        assert ctx is not None
+        assert ctx.remote_target.endswith("#feature/x")

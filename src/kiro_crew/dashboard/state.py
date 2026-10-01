@@ -58,6 +58,7 @@ from kiro_crew.dashboard.interaction_coordinator import (
 )
 from kiro_crew.dashboard.notification_coordinator import NotificationCoordinator
 from kiro_crew.dashboard.remote_mirror import mirror_frame as _mirror_relay_frame
+from kiro_crew.dashboard.remote_target_index import RemoteTargetIndex
 from kiro_crew.dashboard.session_pulse_counter import increment_user_session_count_off_loop
 from kiro_crew.dashboard.side_state import SideState
 from kiro_crew.dashboard.slot_buffers import SlotBufferCoordinator
@@ -5785,6 +5786,10 @@ class DashboardState:
         # co-tenancy, and the per-process notify-once dedupe for both signals.
         # In-memory/process-local like self.collisions.
         self.worktrees = WorktreeIndex()
+        # Remote-target collision index (Signal 3): live session -> push target
+        # (canonical remote + upstream branch). In-memory/process-local; shares
+        # the one notify-once dedupe below.
+        self.remote_targets = RemoteTargetIndex()
         self.collision_notify_once = NotifyOnce()
         self.start_time = start_time
         # Published only at the final boot-to-ready boundary in server.py.
