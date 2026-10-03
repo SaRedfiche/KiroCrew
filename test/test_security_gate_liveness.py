@@ -154,7 +154,7 @@ def _url_payload_command(n: int) -> str:
 #: there is pending, and the ssh self-target refusal note says so.
 #:
 #: Raised again, from 28,399, for naming the program and target tokens in a self-kill
-#: refusal: ``argv_floor`` splits the command into shell words at their real source
+#: refusal: ``argv_spans`` splits the command into shell words at their real source
 #: offsets through the shared quote/escape state machine, aligns those raw word spans
 #: to the resolved frame's tokens by index, and brackets the kill program and its
 #: target at their true offsets even when the program entered through a ``$VAR``
@@ -167,12 +167,35 @@ def _url_payload_command(n: int) -> str:
 #: ``argv_floor`` stays under its per-module cap; most of the cost is that machinery
 #: and its record, not new matching logic.
 #:
+#: Raised again, from 28,631, for the review fix that stops the self-kill
+#: diagnostic naming the wrong tokens: ``argv_spans`` now emits a span for an
+#: active newline (the token walk turns it into a ``;`` separator token, so
+#: without it the raw and resolved lists shift by one on any multi-line command)
+#: and, before returning a pair, re-tokenises each picked slice and keeps it only
+#: when both are a single shell word and the program slice is itself a by-name
+#: kill program -- so a residual shift that slipped past the count check (a
+#: cancelling newline-plus-redirect) falls back to the whole-command span instead
+#: of bracketing ``-f`` as the program and ``>`` as the target. The additions are
+#: that newline branch, the re-tokenise check and their comments, plus the
+#: defensive ``try/except`` wrapping the span call in ``__init__`` so a parser
+#: edge case can never raise inside the deny gate. No new matching pass and no
+#: moved threshold -- the verdict is unchanged, only the reader-facing fields.
+#:
+#: Raised again, from 28,700, for the follow-up review fix: the re-tokenise
+#: check verified only the PROGRAM slice, so a shift that moved the TARGET index
+#: alone (a redirect or here-string between the program and the target, e.g.
+#: ``pkill -f <in kirocrew``) still bracketed the wrong word as ``target=``. The
+#: target slice's word is now run through the same name predicate the loop picked
+#: ``j`` by, with an unresolved ``$`` in the slice admitting a ``$VAR``-resolved
+#: target. The addition is that target check and its two regression tests; still
+#: no new matching pass and no moved verdict.
+#:
 #: The number IS the package's measured total, carrying no spare room: a ratchet with
 #: headroom admits exactly the unreviewed growth it exists to catch, so the next line
 #: added here fails this gate and has to be re-pinned deliberately, with its reason
 #: written above. The guards that detect a monolith growing back are the per-file cap
 #: and the facade's share below, and both must stay untouched.
-_PACKAGE_LINE_BUDGET = 28_631
+_PACKAGE_LINE_BUDGET = 28_707
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

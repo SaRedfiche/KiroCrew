@@ -923,6 +923,56 @@ class TestSelfProtectionKillDiagnosticSpans:
         assert "kirocrew" in cmd[target[0] : target[1]]
         assert "kirocrew" not in line  # still no bytes on the line itself
 
+    def test_multiline_with_redirect_keeps_whole_span_not_misaligned_tokens(self) -> None:
+        # A top-level newline is a ``;`` token in the floor's walk, and a
+        # redirect ``>out`` is one walk token but two raw words. When those two
+        # divergences cancel, the word COUNTS match while the slices are shifted
+        # by one, which an index-only alignment would read as ``-f`` the program
+        # and ``>`` the target -- the exact misdiagnosis this feature exists to
+        # prevent. The per-pair re-tokenise check rejects such a shifted pair, so
+        # the diagnostic keeps the honest whole-command span with no
+        # program=/target= fields rather than naming the wrong tokens.
+        for cmd in (
+            "true\npkill -f kirocrew >out",
+            "ls -la\npkill -f kirocrew >/dev/null",
+        ):
+            line = self._diag_line(cmd)
+            assert self._field(line, "program") is None, line
+            assert self._field(line, "target") is None, line
+            assert self._field(line, "span") == (0, len(cmd)), line
+
+    def test_multiline_without_redirect_still_names_the_tokens(self) -> None:
+        # The newline span keeps the common multi-line case (no cancelling
+        # redirect) precise: program=/target= still bracket the real tokens.
+        cmd = "true\npkill -f kirocrew"
+        line = self._diag_line(cmd)
+        program = self._field(line, "program")
+        target = self._field(line, "target")
+        assert program is not None and target is not None, line
+        assert cmd[program[0] : program[1]] == "pkill"
+        assert cmd[target[0] : target[1]] == "kirocrew"
+
+    def test_single_line_shift_between_program_and_target_keeps_whole_span(self) -> None:
+        # The newline span closes the multi-line half of the count
+        # cancellation, but a divergence that lands BETWEEN the program and the
+        # target shifts ``j`` alone while the counts still match: a redirect or
+        # here-string is one walk token but the raw split breaks it, so the
+        # target slice lands on the wrong word while the program slice stays
+        # correct. The program slice re-tokenises to a kill program here
+        # (``pkill``), so a program-only check would admit the pair and name
+        # ``in``/``x`` -- the token after the ``<``/``<<<`` operator -- as the
+        # target. Verifying the TARGET slice with the same name predicate the
+        # loop picks ``j`` by rejects the shifted pair, so the diagnostic keeps
+        # the honest whole-command span with no program=/target= fields.
+        for cmd in (
+            "pkill -f <in kirocrew # it's ok",
+            "pkill -f <<<x kirocrew # it's fine",
+        ):
+            line = self._diag_line(cmd)
+            assert self._field(line, "program") is None, line
+            assert self._field(line, "target") is None, line
+            assert self._field(line, "span") == (0, len(cmd)), line
+
     def test_other_floors_have_no_token_fields(self) -> None:
         # Acceptance criterion 3: a different floor's diagnostic line is
         # byte-identical to before -- no program=/target=.

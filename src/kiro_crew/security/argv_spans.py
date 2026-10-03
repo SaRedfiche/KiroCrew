@@ -36,6 +36,15 @@ def _raw_word_spans(source: str) -> list[tuple[int, int]]:
     separator as one token -- so the span list aligns index-for-index with the
     top-level frame for the common command shapes.
 
+    An ACTIVE newline gets its own one-character span, because the token walk
+    turns a top-level newline into a ``;`` separator TOKEN
+    (:func:`argv_floor._self_tokens`): without a span for it the two lists would
+    be shifted by one on any multi-line command, and -- paired with a redirect
+    that the walk keeps as one token but the raw split breaks in two -- the two
+    shifts could cancel so the counts still matched while the lists were
+    misaligned. Emitting the newline span removes one half of that cancellation;
+    :func:`_self_kill_token_spans` re-checks each paired slice to catch the rest.
+
     It does NOT resolve quoting, ``$VAR`` or ``~``: these are RAW source offsets,
     so the region a reader sees is the bytes they actually hold, even when the
     token walk later resolved that word to something else (``"$C"/gateway/*``).
@@ -54,6 +63,15 @@ def _raw_word_spans(source: str) -> list[tuple[int, int]]:
             spans.append((start, off))
             start = -1
             prev_was_operator = False
+        # An active newline is a separator the token walk turns into a ``;``
+        # token, so it needs its own span to keep the two lists aligned by
+        # index. It is whitespace to the operator-coalescing rule below (a run
+        # of ``;``/``\n`` must not fuse into one span the way ``&&`` does), so it
+        # is handled here, before that rule, and resets the operator run.
+        if step.active and step.char == "\n":
+            spans.append((off, off + len(step.text)))
+            prev_was_operator = False
+            continue
         # An unquoted operator character is a separator word of its own; a run of
         # them (``&&``, ``||``, ``;;``) coalesces into one span, but an operator
         # that merely abuts a preceding WORD (``export;``) stays its own span.
@@ -84,15 +102,35 @@ def _self_kill_token_spans(text_lower: str) -> tuple[tuple[int, int], tuple[int,
     the TOP-LEVEL frame (``source == text_lower``, i.e. the frame the outer
     offsets belong to): a nested-payload frame's tokens live inside one token of
     the outer command, so their offsets are not the outer command's, and those
-    keep the whole-command span. Raw word spans are aligned to the frame's tokens
-    BY INDEX -- faithful because both derive from the same word split, before the
-    per-word quote/``$VAR``/``~`` resolution the token walk then applies. That is
-    why a ``$C``-resolved command still yields spans: the raw word
-    ``"$C"/gateway/*`` is the token the floor keyed on, bracketed at its real
-    offset even though the product name entered it by expansion. When the word
-    counts disagree (an empty-quote collapse merged a word) the index alignment
-    is not provable, so this returns ``None`` and the caller keeps the
-    whole-command span. The bare-``kill`` leg aims through a substitution BODY
+    keep the whole-command span. Raw word spans are lined up with the frame's
+    tokens BY INDEX, but equal word COUNTS are NOT a proof that the two lists
+    align: the raw splitter and the floor's token walk break words by different
+    rules (an active newline is a ``;`` token in the walk but was dropped by the
+    raw split until the newline span was added; a redirect such as ``>out`` is
+    one token in the walk but two raw words), and two such differences can CANCEL
+    so the counts can match while the slices are shifted. On
+    ``true`` + newline + ``pkill -f <name> >out`` such a shift would name ``-f``
+    the program and ``>`` the target -- the exact misdiagnosis this module
+    exists to prevent. The newline span closes the multi-line half of that
+    cancellation, but a shift can still sit between the program and the target,
+    so before a pair is returned each picked slice is RE-TOKENISED through the
+    same word split (:func:`shell_normalizer._self_tokens`) and must come back as
+    a SINGLE shell word. The program slice's word must itself be a kill program
+    as ``tokens[i]`` is, and the target slice's word must itself name the product
+    as ``tokens[j]`` (``arg``) does -- the same predicate the loop picked ``j``
+    by. A shift that moves only ``j`` (a redirect or here-string the raw split
+    breaks but the walk keeps as one token, sitting between the two) leaves the
+    program slice right while the target lands on the wrong word -- ``<in
+    kirocrew`` would name ``in``, ``\xa0 kirocrew >/dev/null`` would name ``>`` --
+    which only the target check rejects. Both checks read the resolved WORD, not
+    its raw bytes; when the target slice carries an unresolved ``$`` the name
+    entered ``arg`` by an expansion the re-tokenise cannot see
+    (``"$C"/gateway/*``), so the ``$`` it still carries is what admits it -- a
+    shift lands on a word with no name and no ``$`` to have hidden one. On any
+    disagreement, and when the counts disagree outright (an empty-quote collapse
+    merged a word), this returns ``None`` and the caller keeps the whole-command
+    span -- a mismatch costs precision (a fallback), never correctness (a
+    misnamed token). The bare-``kill`` leg aims through a substitution BODY
     rather than one argv token, so it too has no pair to point at.
 
     The floor's structural predicates are reached through the :mod:`argv_floor`
@@ -125,6 +163,35 @@ def _self_kill_token_spans(text_lower: str) -> tuple[tuple[int, int], tuple[int,
                 if _argv_floor._SELF_NAME_RE.search(
                     _argv_floor._debracket(arg)
                 ) or _argv_floor._SELF_NAME_RE.search(_shell_normalizer._normalize_operand(arg)):
+                    # Equal counts are not alignment, so verify BOTH slices (see
+                    # the docstring): each re-tokenises to ONE word, the program
+                    # word is a kill program as ``tokens[i]`` is, and the target
+                    # word names the product as ``arg`` does. A shift that moves
+                    # only ``j`` keeps the program right but lands the target on
+                    # the wrong word -- which only the target check rejects.
+                    prog_words = _shell_normalizer._self_tokens(
+                        text_lower[raw_spans[i][0] : raw_spans[i][1]]
+                    )
+                    target_words = _shell_normalizer._self_tokens(
+                        text_lower[raw_spans[j][0] : raw_spans[j][1]]
+                    )
+                    if (
+                        len(prog_words) != 1
+                        or len(target_words) != 1
+                        or not _argv_floor._is_kill_by_name_program(prog_words[0])
+                    ):
+                        return None
+                    target_word = target_words[0]
+                    target_names_product = _argv_floor._SELF_NAME_RE.search(
+                        _argv_floor._debracket(target_word)
+                    ) or _argv_floor._SELF_NAME_RE.search(
+                        _shell_normalizer._normalize_operand(target_word)
+                    )
+                    if not target_names_product and "$" not in target_word:
+                        # Name absent from the slice and no ``$`` could have hidden
+                        # it by expansion (``"$C"/gateway/*`` resolves into ``arg``,
+                        # already matched): a shift onto a non-name word.
+                        return None
                     return raw_spans[i], raw_spans[j]
                 depth += _argv_floor._substitution_depth_delta(arg)
                 if depth <= 0 and _argv_floor._ends_argv(arg):

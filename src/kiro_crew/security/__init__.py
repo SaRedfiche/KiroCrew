@@ -1441,7 +1441,16 @@ def is_denied(
             program_span: "tuple[int, int] | None" = None
             target_span: "tuple[int, int] | None" = None
             if rule_id == "self-protection-kill":
-                spans = _submodule("argv_spans")._self_kill_token_spans(lower)
+                # The span computation is a reader-facing diagnostic, never part
+                # of the verdict (the deny is already decided above). It must not
+                # be the thing that raises inside a gate -- the contract
+                # ``refusal_diagnostic`` states -- so any parser edge case in it
+                # degrades to the plain whole-command span rather than letting an
+                # exception escape ``is_denied`` from a deny branch.
+                try:
+                    spans = _submodule("argv_spans")._self_kill_token_spans(lower)
+                except Exception:
+                    spans = None
                 if spans is not None:
                     program_span, target_span = spans
             return _reason(
