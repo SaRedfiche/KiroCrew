@@ -14,6 +14,30 @@ from kiro_crew.dashboard.collision_derive import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _git_through_sandbox_passthrough(monkeypatch):
+    """Route ``collision_derive``'s git probe around the OS sandbox for tests.
+
+    ``_run_git`` wraps every ``git`` call through ``sandboxed_spawn_argv`` and, by
+    design, DROPS to None when that wrap is unavailable (a host with no OS sandbox
+    backend — e.g. a Linux/Windows CI shard without one). The positive-path tests
+    below assert that a real repo derives a non-None result, so they must exercise
+    the derive logic itself rather than the host's sandbox availability. Replace
+    the wrap with a passthrough that returns the real argv unwrapped (the pattern
+    used for the exemplar routed caller in ``test_dashboard_worktree_coverage``):
+    real ``git`` runs, the derive logic is verified everywhere, and no backend is
+    required. A test that specifically needs the no-backend branch
+    (``TestNoSandboxBackendDegradesToNone``, ``test_git_failure_returns_none``)
+    monkeypatches the symbol again itself, which overrides this per-test.
+    """
+    import kiro_crew.dashboard.collision_derive as cd
+
+    def _passthrough(argv, mode="standard", **_kw):
+        return list(argv), {}, None
+
+    monkeypatch.setattr(cd, "sandboxed_spawn_argv", _passthrough)
+
+
 def _coords(abs_file, cwd):
     """Test helper: full derive via the split API (context + per-path relpath)."""
     ctx = derive_repo_context(cwd)
