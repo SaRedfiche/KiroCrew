@@ -1148,20 +1148,9 @@ def test_process_age_comes_from_the_process_start_not_the_procfs_inode() -> None
     Pinned against the repository's own helper rather than a recomputation of it,
     and against this live process, whose age is genuinely non-zero.
     """
-    from kiro_crew import platform_compat
     from kiro_crew.session_pid import _pid_age_seconds
 
     mine = os.getpid()
-    if platform_compat.IS_WINDOWS:
-        # No procfs and no start clock there, which the helper documents by
-        # returning None. The contract that matters on Windows is the fail-closed
-        # one: an unreadable age is too young to touch, so the age floor withholds
-        # every kill rather than reading each candidate as ancient.
-        assert _pid_age_seconds(mine) is None
-        assert rr.process_age_secs(mine) == 0.0
-        assert rr.process_age_secs(2**31 - 1) == 0.0
-        return
-
     expected = _pid_age_seconds(mine)
     assert expected is not None, "this process's own age must be readable"
     measured = rr.process_age_secs(mine)
