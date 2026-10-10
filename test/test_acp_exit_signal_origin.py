@@ -75,25 +75,25 @@ async def test_self_kill_names_signal_and_crew(caplog: pytest.LogCaptureFixture)
     message = await _exit_message(dead)
     assert "SIGKILL" in message
     assert "killed by Crew (forced stop)" in message
-    assert "external" not in message
+    assert "not sent by this client" not in message
 
 
 @posix_only
 @pytest.mark.asyncio
-async def test_unsent_signal_is_external() -> None:
+async def test_unsent_signal_is_not_sent_by_this_client() -> None:
     message = await _exit_message(_dead_client(-signal.SIGKILL))
     assert "SIGKILL" in message
-    assert "external" in message
+    assert "not sent by this client" in message
     assert "killed by Crew" not in message
 
 
 @posix_only
 @pytest.mark.asyncio
-async def test_different_signal_than_sent_is_external() -> None:
+async def test_different_signal_than_sent_is_not_sent_by_this_client() -> None:
     dead = _dead_client(-signal.SIGKILL)
     dead._kill_sent = (int(signal.SIGTERM), "stop requested")
     message = await _exit_message(dead)
-    assert "external" in message
+    assert "not sent by this client" in message
     assert "killed by Crew" not in message
 
 

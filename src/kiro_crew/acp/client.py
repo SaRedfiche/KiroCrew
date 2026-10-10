@@ -1810,7 +1810,7 @@ def _exit_origin(code: int | None, sent: tuple[int, str] | None) -> str:
         name = signal.Signals(-code).name
     except ValueError:
         name = f"signal {-code}"
-    who = f"killed by Crew ({sent[1]})" if sent and sent[0] == -code else "external"
+    who = f"killed by Crew ({sent[1]})" if sent and sent[0] == -code else "not sent by this client"
     return f", {name}, {who}"
 
 
