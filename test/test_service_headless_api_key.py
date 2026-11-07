@@ -202,6 +202,10 @@ class TestHeadlessApiKeyWarning:
             {self.API_KEY: self.SECRET, "KIROCREW_HOME": "/srv/crew"}
         )
         assert "KIROCREW_HOME" in with_home
+        # service_environment() bakes the home, so the caveat must not claim it
+        # is dropped; it stays because an override file can still replace it.
+        assert "not inherited" not in with_home
+        assert "override file" in with_home
 
     def test_remedy_tightens_permissions_before_writing_the_secret(self, monkeypatch, tmp_path):
         """The append must not be the step that creates the file.
