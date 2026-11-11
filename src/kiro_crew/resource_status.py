@@ -50,6 +50,7 @@ reader (``docs/system-specs/modules/subagent.md``).
 from __future__ import annotations
 
 import logging
+import math
 import os
 import shutil
 import sys
@@ -1134,6 +1135,20 @@ class SpawnFloorReading:
             return True
         return 0 <= self.available_gb < self.min_start_gb
 
+    def _gate_texts(self) -> tuple[str, str]:
+        """The gate's figure and the bar, both at two decimals.
+
+        When blocked, the figure is floored and the bar ceiled to the hundredth,
+        so the figure prints below the bar it misses (2.469 against 2.47 reads
+        2.46; 2.462 against 2.464 reads 2.46 against 2.47).
+        """
+        figure, bar = self.available_gb, self.min_start_gb
+        if self.blocked:
+            # round() first so a float like 0.29 * 100 == 28.999... is not floored to 0.28
+            figure = math.floor(round(figure * 100, 6)) / 100
+            bar = math.ceil(round(bar * 100, 6)) / 100
+        return f"{figure:.2f}", f"{bar:.2f}"
+
     def summary_line(self) -> str:
         """The pull tool's line for the floor, stated against the gate's figure."""
         if not self.enabled:
@@ -1148,9 +1163,10 @@ class SpawnFloorReading:
             return f"{head}; {self.unknown_note} — BLOCKED: {_BLOCKED_NOTE}"
         if self.available_gb < 0:
             return f"{head}; the gate's memory figure is unreadable here, so starts are not held"
+        figure, bar = self._gate_texts()
         line = (
-            f"{head}; the gate reads {self.available_gb:.1f} GB, a top-level start needs at least "
-            f"{self.min_start_gb:.2f} GB (more for a dedicated one or while other "
+            f"{head}; the gate reads {figure} GB, a top-level start needs at least "
+            f"{bar} GB (more for a dedicated one or while other "
             "starts are warming)"
         )
         if self.blocked:
@@ -1166,9 +1182,10 @@ class SpawnFloorReading:
                 f"new top-level subagents cannot start now ({self.unknown_note}); "
                 "they wait in the queue"
             )
+        figure, bar = self._gate_texts()
         return (
             f"new top-level subagents cannot start now — the gate reads "
-            f"{self.available_gb:.1f} GB and one needs at least {self.min_start_gb:.2f} GB; "
+            f"{figure} GB and one needs at least {bar} GB; "
             "they wait in the queue until memory frees"
         )
 

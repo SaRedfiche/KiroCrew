@@ -1371,10 +1371,52 @@ def test_a_floor_above_the_gate_figure_is_blocked(monkeypatch) -> None:
     reading = rs.spawn_floor_reading(_spawn_cfg(4.0))
     assert reading.blocked
     assert "BLOCKED: new top-level subagents wait in the queue" in reading.summary_line()
-    assert "the gate reads 3.3 GB" in reading.blocked_sentence()
+    assert "the gate reads 3.30 GB" in reading.blocked_sentence()
     # Scoped to top-level starts: a running subagent's shared nested start
     # skips its own start charge, so it can clear a lower bar.
     assert "new top-level subagents cannot start now" in reading.blocked_sentence()
+
+
+@pytest.mark.parametrize(("below", "shown"), [(0.01, "2.46"), (0.001, "2.46")])
+def test_a_blocked_figure_never_prints_at_or_above_an_uneven_bar(
+    monkeypatch, below: float, shown: str
+) -> None:
+    """A learned 0.82 GB start puts the bar at 2.47 GB; a figure just under it
+    must print under it, at the bar's two decimals (2.469 floors, not rounds)."""
+    from kiro_crew.subagent import _shared_start_price_gb
+
+    monkeypatch.setattr(rs, "_read_learned_settled", lambda: {"kirocrew": 0.82})
+    bar = 2.0 + _shared_start_price_gb(0.82)
+    assert f"{bar:.2f}" == "2.47"
+    _gate_figure(monkeypatch, bar - below)
+    reading = rs.spawn_floor_reading(_spawn_cfg(2.0))
+    assert reading.blocked
+    assert f"the gate reads {shown} GB, a top-level start needs at least 2.47 GB" in (
+        reading.summary_line()
+    )
+    assert f"the gate reads {shown} GB and one needs at least 2.47 GB" in (
+        reading.blocked_sentence()
+    )
+
+
+def test_a_blocked_bar_that_would_round_down_prints_rounded_up() -> None:
+    """A 2.464 bar prints 2.46 at plain .2f, level with a floored 2.462 figure;
+    blocked, the bar rounds up so the line never reads 2.46 against 2.46."""
+    reading = rs.SpawnFloorReading(floor_gb=2.0, available_gb=2.462, min_start_gb=2.464)
+    assert reading.blocked
+    assert "the gate reads 2.46 GB, a top-level start needs at least 2.47 GB" in (
+        reading.summary_line()
+    )
+    assert "the gate reads 2.46 GB and one needs at least 2.47 GB" in reading.blocked_sentence()
+    # Not blocked: both print at plain .2f.
+    met = rs.SpawnFloorReading(floor_gb=2.0, available_gb=8.0, min_start_gb=2.464)
+    assert "the gate reads 8.00 GB, a top-level start needs at least 2.46 GB" in met.summary_line()
+
+
+def test_a_blocked_figure_on_an_exact_hundredth_is_not_floored_below_it(monkeypatch) -> None:
+    """0.29 * 100 is 28.999... in floats; the floor must still print 0.29."""
+    _gate_figure(monkeypatch, 0.29)
+    assert "the gate reads 0.29 GB" in rs.spawn_floor_reading(_spawn_cfg(2.0)).summary_line()
 
 
 def test_a_remote_caller_takes_no_reading_and_is_never_blocked(monkeypatch) -> None:
