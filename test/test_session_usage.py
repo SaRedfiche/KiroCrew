@@ -115,6 +115,40 @@ class TestParseUsage:
         )
         assert _parse_usage(raw)["bonus_credits"] == []
 
+    def test_parses_colonless_header_and_credits_used_line(self):
+        # The V2 engine /usage output: colon-less header, "credits used" lines.
+        raw = (
+            "Estimated Usage | resets on 2026-12-01 | KIRO FREE\n"
+            "Bonus credits\n"
+            "kiroween-2026: 100.54/4000 credits used, expires in 49 days\n"
+            "Second: 1/2 Credits Used, Expires In 1 day\n"
+            "Credits (0.00 of 50 covered in plan), 0.0%\n"
+        )
+        assert _parse_usage(raw)["bonus_credits"] == [
+            {"name": "kiroween-2026", "used": 100.54, "total": 4000.0, "days_left": 49},
+            {"name": "Second", "used": 1.0, "total": 2.0, "days_left": 1},
+        ]
+
+    def test_skips_malformed_credits_used_lines(self):
+        raw = (
+            "Estimated Usage\nBonus credits\n"
+            "a: 1/x credits used, expires in 2 days\n"
+            "b: 1/2 credits used, expires in two days\n"
+            "c: 1/2 credits used, expires in 2 weeks\n"
+            "d: 1e3/2 credits used, expires in 2 days\n"
+            "e: 12 credits used, expires in 2 days\n"
+            "f: 1/2 credits used, expires in 9999 days\n"
+            f"{'x' * 101}: 1/2 credits used, expires in 2 days\n"
+            "ok: 1/2 credits used, expires in 2 days\n"
+        )
+        assert _parse_usage(raw)["bonus_credits"] == [
+            {"name": "ok", "used": 1.0, "total": 2.0, "days_left": 2}
+        ]
+
+    def test_credits_used_grants_are_capped(self):
+        raw = "Estimated Usage\nBonus credits\n" + "g: 1/2 credits used, expires in 2 days\n" * 40
+        assert len(_parse_usage(raw)["bonus_credits"]) == 32
+
 
 class TestTransientFailureCache:
     """A failed refresh keeps a prior reading only for the SAME account.

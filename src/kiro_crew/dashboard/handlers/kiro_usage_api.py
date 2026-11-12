@@ -244,6 +244,8 @@ _SQLITE_AUDIT_READ_ID = "kiro_usage_api.sqlite_token"
 _MAX_CREDITS = 1_000_000.0
 _MAX_BONUS_GRANTS = 32
 _MAX_BONUS_NAME_CHARS = 100
+#: Same bound as the text scrape's: a further-out expiry publishes no days_left.
+_MAX_BONUS_DAYS_LEFT = 3_650
 
 # Cap the RTS response body so an oversized or indefinitely-streamed response
 # cannot exhaust memory or tie up a shared subprocess worker. The usage JSON is
@@ -799,7 +801,7 @@ def _bounded(value: object) -> float | None:
     return f
 
 
-def _map_response(data: dict) -> dict | None:
+def _map_response(data: dict, *, now: float | None = None) -> dict | None:
     """Translate a GetUsageLimits response into KiroCrew's canonical usage dict.
 
     Canonical shape (shared with the text-scrape fallback so consumers never
@@ -813,7 +815,9 @@ def _map_response(data: dict) -> dict | None:
       overage_rate     per-credit overage rate
       plan, resets     display strings
       source           "api"
+      bonus_credits    [{name, used, total, days_left?}] when bonus grants exist
 
+    ``now`` (epoch seconds, default the wall clock) dates a grant's days_left.
     Returns None when no usable CREDIT breakdown with a finite used+limit exists.
     """
     if not isinstance(data, dict):
@@ -950,6 +954,43 @@ def _map_response(data: dict) -> dict | None:
         )
         if len(bonus_credits) >= _MAX_BONUS_GRANTS:
             break
+    # The live reply nests bonus grants inside the CREDIT entry as "bonuses",
+    # each with a displayName, a status and an epoch-seconds expiresAt. Only an
+    # ACTIVE grant counts; a missing or malformed expiresAt omits days_left.
+    nested = credit.get("bonuses")
+    if not isinstance(nested, list):
+        nested = []
+    now_ts = time.time() if now is None else now
+    for nb in nested:
+        if len(bonus_credits) >= _MAX_BONUS_GRANTS:
+            break
+        if not isinstance(nb, dict) or nb.get("status") != "ACTIVE":
+            continue
+        nb_used = _bounded(nb.get("currentUsageWithPrecision"))
+        if nb_used is None:
+            nb_used = _bounded(nb.get("currentUsage"))
+        nb_limit = _bounded(nb.get("usageLimitWithPrecision"))
+        if nb_limit is None:
+            nb_limit = _bounded(nb.get("usageLimit"))
+        if nb_used is None or nb_limit is None or nb_limit <= 0:
+            continue
+        label = nb.get("displayName") or "Bonus"
+        if not isinstance(label, str) or not label.isprintable():
+            continue
+        grant: dict[str, object] = {
+            "name": label[:_MAX_BONUS_NAME_CHARS],
+            "used": nb_used,
+            "total": nb_limit,
+        }
+        try:
+            expires = float(nb.get("expiresAt"))  # type: ignore[arg-type]
+        except (TypeError, ValueError, OverflowError):
+            expires = math.nan
+        if math.isfinite(expires) and expires > 0:
+            days_left = max(0, int((expires - now_ts) // 86400))
+            if days_left <= _MAX_BONUS_DAYS_LEFT:
+                grant["days_left"] = days_left
+        bonus_credits.append(grant)
     if bonus_credits:
         result["bonus_credits"] = bonus_credits
         first = bonus_credits[0]

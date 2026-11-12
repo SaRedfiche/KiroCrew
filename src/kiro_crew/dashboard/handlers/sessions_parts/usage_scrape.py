@@ -15,6 +15,7 @@ import asyncio
 import logging
 import os
 import re
+import string
 
 from kiro_crew.cloud.login_target import parse_whoami_output
 from kiro_crew.executors import subprocess_executor
@@ -43,6 +44,26 @@ _BONUS_COLON_RE = re.compile(
     r"^(.+?):\s*([\d.]+)/([\d.]+)\s*\(expires\s+in\s+(\d+)\s+days?\)$",
     re.IGNORECASE,
 )
+_NUMBER_CHARS = frozenset(string.digits + ".")
+_DIGIT_CHARS = frozenset(string.digits)
+
+
+def _parse_credits_used_line(line: str) -> tuple[str, str, str, str] | None:
+    """Split ``name: used/total credits used, expires in N days`` into its parts.
+
+    The newer kiro-cli bonus line. Returns ``(name, used, total, days)`` as raw
+    strings for the caller's bounds checks, or None when the line has another shape.
+    """
+    name, sep, rest = line.partition(":")
+    usage, sep2, tail = rest.casefold().partition(" credits used, expires in ")
+    used, sep3, total = usage.strip().partition("/")
+    days = tail.removesuffix(" days").removesuffix(" day")
+    parts = (used, total, days)
+    if not (sep and sep2 and sep3) or days == tail or not all(parts):
+        return None
+    if not (set(used) | set(total)) <= _NUMBER_CHARS or not set(days) <= _DIGIT_CHARS:
+        return None
+    return name, used, total, days
 
 
 def _safe_float(text: str) -> float | None:
@@ -115,14 +136,16 @@ def _parse_usage(raw: str) -> dict[str, object]:
                 if rate is not None:
                     result["overage_rate"] = rate
 
-    # Kiro CLI has shipped both "name: used/total (expires in N days)" and
-    # "name - used/total used (N days left)". Parse both bounded formats and
-    # retain every active grant; one malformed line must not poison the rest.
+    # Kiro CLI has shipped "name: used/total (expires in N days)",
+    # "name - used/total used (N days left)" and, under a colon-less
+    # "Bonus credits" header, "name: used/total credits used, expires in N days".
+    # Parse every bounded format and retain each active grant; one malformed
+    # line must not poison the rest.
     bonus_credits: list[dict[str, object]] = []
     in_bonus_section = False
     for raw_line in usage_lines:
         line = raw_line.strip()
-        if "bonus credits:" in line.casefold():
+        if "bonus credits:" in line.casefold() or line.casefold() == "bonus credits":
             in_bonus_section = True
             continue
         if not in_bonus_section:
@@ -141,8 +164,9 @@ def _parse_usage(raw: str) -> dict[str, object]:
                 name = match.group(1)
                 values = match.group(2), match.group(3), match.group(4)
             else:
-                name = ""
-                values = None
+                parts = _parse_credits_used_line(line)
+                name = parts[0] if parts else ""
+                values = parts[1:] if parts else None
         name = name.strip()
         if not values or not name or len(name) > _MAX_BONUS_NAME_CHARS:
             continue

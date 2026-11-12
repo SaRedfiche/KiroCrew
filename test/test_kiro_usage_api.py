@@ -145,6 +145,71 @@ class TestMapResponse:
         ]}
         assert "bonus_limit" not in api._map_response(data)
 
+    # 2026-11-12T00:00:00Z; every nested-bonus test dates its grant from it.
+    _NOW = 1_794_441_600.0
+
+    def _nested(self, *bonuses):
+        return {"usageBreakdownList": [
+            {"resourceType": "CREDIT", "currentUsage": 0, "usageLimit": 50,
+             "bonuses": list(bonuses)},
+        ]}
+
+    def _grant(self, **kw):
+        base = {"bonusCode": "kiroween-2026-secret", "displayName": "kiroween-2026",
+                "currentUsage": 103.9, "usageLimit": 4000.0, "status": "ACTIVE",
+                "expiresAt": self._NOW + 49 * 86400 + 3600}
+        base.update(kw)
+        return base
+
+    def test_reads_active_bonus_nested_in_credit_entry(self):
+        out = api._map_response(self._nested(self._grant()), now=self._NOW)
+        assert out["credits_plan"] == 50.0
+        assert out["bonus_credits"] == [
+            {"name": "kiroween-2026", "used": 103.9, "total": 4000.0, "days_left": 49}
+        ]
+        assert out["bonus_label"] == "kiroween-2026"
+
+    def test_skips_nested_bonus_that_is_not_active(self):
+        data = self._nested(self._grant(status="EXPIRED"), self._grant(status=None),
+                            self._grant(displayName="live"))
+        assert [g["name"] for g in api._map_response(data, now=self._NOW)["bonus_credits"]] == [
+            "live"
+        ]
+
+    def test_bad_or_missing_expiry_omits_days_left(self):
+        grants = [self._grant(displayName=f"g{i}", expiresAt=v)
+                  for i, v in enumerate(["soon", None, float("nan"), -5, {"x": 1}, 1e300, 10**400])]
+        out = api._map_response(self._nested(*grants), now=self._NOW)
+        assert [g.get("days_left") for g in out["bonus_credits"]] == [None] * 7
+        assert len(out["bonus_credits"]) == 7
+
+    def test_past_expiry_reads_zero_days_left(self):
+        out = api._map_response(self._nested(self._grant(expiresAt=self._NOW - 86400)),
+                                now=self._NOW)
+        assert out["bonus_credits"][0]["days_left"] == 0
+
+    def test_skips_malformed_nested_bonus(self):
+        data = self._nested("junk", self._grant(usageLimit=0), self._grant(currentUsage="x"),
+                            self._grant(displayName="bad\nname"), self._grant(displayName=None))
+        assert api._map_response(data, now=self._NOW)["bonus_credits"] == [
+            {"name": "Bonus", "used": 103.9, "total": 4000.0, "days_left": 49}
+        ]
+
+    def test_non_list_bonuses_is_ignored(self):
+        data = self._nested()
+        data["usageBreakdownList"][0]["bonuses"] = {"displayName": "x"}
+        assert "bonus_credits" not in api._map_response(data, now=self._NOW)
+
+    def test_nested_and_sibling_grants_share_the_caps(self):
+        data = self._nested(*[self._grant(displayName="n" * 150)] * (api._MAX_BONUS_GRANTS + 5))
+        data["usageBreakdownList"].append(
+            {"resourceType": "PROMO", "displayName": "sibling",
+             "currentUsage": 1.0, "usageLimit": 2.0})
+        grants = api._map_response(data, now=self._NOW)["bonus_credits"]
+        assert len(grants) == api._MAX_BONUS_GRANTS
+        assert grants[0]["name"] == "sibling"
+        assert {len(g["name"]) for g in grants[1:]} == {api._MAX_BONUS_NAME_CHARS}
+
     def test_warns_on_two_credit_typed_pools(self, caplog):
         # The exact payload nobody has captured: TWO entries typed literally
         # "CREDIT". The picker takes the first by list order; detection must fire
