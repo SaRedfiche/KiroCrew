@@ -1123,6 +1123,7 @@ if TYPE_CHECKING:  # every owner-defined name in _EXPORTS, for type checkers and
     from kiro_crew.slack.interactions_options import _options_block_id  # noqa: F401
     from kiro_crew.slack.interactions_options import _options_choices_from_payload  # noqa: F401
     from kiro_crew.slack.interactions_options import _refuse_stale_options  # noqa: F401
+    from kiro_crew.slack.interactions_options import _resolve_approval_mode  # noqa: F401
     from kiro_crew.slack.interactions_options import _route_action_to_session  # noqa: F401
     from kiro_crew.slack.interactions_sessions import _clear_session_dismissed  # noqa: F401
     from kiro_crew.slack.interactions_sessions import _record_session_dismissed  # noqa: F401

@@ -944,3 +944,95 @@ class TestCodeChannelAnswerSender:
         await ix._handle_options(self._as_clicker(payload), action, "C0CODE", "m1")
         await _join(orch)
         assert turns.await_args.kwargs["user_meta"] is None
+
+
+# ---------------------------------------------------------------------------
+# A button-started turn carries the same approval mode as a typed message
+# ---------------------------------------------------------------------------
+
+
+class TestButtonTurnApprovalMode:
+    """A click resolves its approval mode the way a typed Slack message does."""
+
+    @pytest.fixture
+    def mode(self, orch: MagicMock, monkeypatch: pytest.MonkeyPatch):
+        from kiro_crew.slack import events_queue
+
+        monkeypatch.setattr(events_queue, "is_yolo_mode", lambda: False)
+        orch._approval_mode = None
+
+        def _set(configured: str) -> None:
+            orch._cfg.agent.approval_mode = configured
+
+        return _set
+
+    @pytest.mark.parametrize("configured", ["auto", "interactive"])
+    @pytest.mark.asyncio
+    async def test_a_one_click_choice_uses_the_configured_mode(
+        self, orch: MagicMock, turns: AsyncMock, forget: MagicMock, mode: Any, configured: str
+    ) -> None:
+        mode(configured)
+        payload, action = _click(["A", "B"], 1)
+        await ix._handle_options(payload, action, "C1", "m1")
+        await _join(orch)
+        assert turns.await_args.kwargs["approval_mode"] == configured
+
+    @pytest.mark.parametrize("configured", ["auto", "interactive"])
+    @pytest.mark.asyncio
+    async def test_an_action_button_uses_the_configured_mode(
+        self, orch: MagicMock, turns: AsyncMock, audit: MagicMock, mode: Any, configured: str
+    ) -> None:
+        mode(configured)
+        action = {"action_id": "btn_go", "value": 'action::{"go": 1}', "text": {"text": "Go"}}
+        payload, _ = _click(["A"], 0)
+        await ix._handle_options(payload, action, "C1", "m1")
+        await _join(orch)
+        assert turns.await_args.kwargs["approval_mode"] == configured
+
+    @pytest.mark.parametrize("configured", ["auto", "interactive"])
+    @pytest.mark.asyncio
+    async def test_a_choose_several_answer_uses_the_configured_mode(
+        self, orch: MagicMock, turns: AsyncMock, forget: MagicMock, mode: Any, configured: str
+    ) -> None:
+        mode(configured)
+        await _submit_several(orch, ["A", "B"], [0, 1])
+        await _join(orch)
+        assert turns.await_args.kwargs["approval_mode"] == configured
+
+    @pytest.mark.asyncio
+    async def test_a_disallowed_user_starts_no_turn_in_auto_mode(
+        self,
+        orch: MagicMock,
+        turns: AsyncMock,
+        mode: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        mode("auto")
+        monkeypatch.setattr(ix, "is_allowed_user", lambda uid: False)
+        payload, action = _click(["A", "B"], 1)
+        await ix.dispatch({**payload, "channel": {"id": "C1"}, "actions": [action]})
+        await _join(orch)
+        turns.assert_not_awaited()
+        orch.slack.update_message.assert_not_awaited()
+        orch.slack.post_ephemeral.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_a_disallowed_submitter_starts_no_turn_in_auto_mode(
+        self,
+        orch: MagicMock,
+        turns: AsyncMock,
+        audit: MagicMock,
+        mode: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        mode("auto")
+        opened = _card(["A", "B"])
+        await ix._open_options_several(opened, {"block_id": "blk1"}, "C1", "m1")
+        view = orch.slack.views_open.await_args.args[1]
+        monkeypatch.setattr(ix, "is_allowed_user", lambda uid: False)
+        await ix._handle_options_several_submission(
+            {"user": {"id": "U1"}, "view": {"private_metadata": view["private_metadata"]}}
+        )
+        await _join(orch)
+        turns.assert_not_awaited()
+        assert audit.log_tool_invocation.call_args.kwargs["outcome"] == "denied"
